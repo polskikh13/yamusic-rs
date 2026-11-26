@@ -81,9 +81,18 @@ mod sys;
 #[path = "../../ios/src/sys.rs"]
 mod sys;
 mod vector;
-// На iOS у Slint нет OpenGL: шейдер волны там не ставится, остаётся только тип для `sync`.
+// На iOS у Slint нет OpenGL: оттуда берутся только переходы и тайминги, рисует wave_cpu.
 #[cfg_attr(target_os = "ios", allow(dead_code))]
 mod wave_gl;
+#[cfg(target_os = "ios")]
+#[path = "../../ios/src/wave_cpu.rs"]
+mod wave_cpu;
+
+/// Сцена «Моей волны»: шейдер на OpenGL ES на Android, расчёт на процессоре на iOS.
+#[cfg(not(target_os = "ios"))]
+type WaveScene = wave_gl::Wave;
+#[cfg(target_os = "ios")]
+type WaveScene = wave_cpu::Wave;
 
 use api::{Api, Track};
 use config::{log, Config};
@@ -212,12 +221,16 @@ fn run() -> Result<(), slint::PlatformError> {
     };
     profile::load_pictures(&ui);
 
-    let wave: Rc<RefCell<Option<wave_gl::Wave>>> = Default::default();
+    let wave: Rc<RefCell<Option<WaveScene>>> = Default::default();
     if let Some(src) = shader {
         #[cfg(target_os = "android")]
         install_wave(&ui, src, wave.clone());
-        #[cfg(not(target_os = "android"))]
-        let _ = src;
+        // Своего шейдера у iOS нет: рисунок из wave.frag повторён в wave_cpu.
+        #[cfg(target_os = "ios")]
+        {
+            let _ = src;
+            install_wave_cpu(&ui, wave.clone());
+        }
     }
 
     let weak = ui.as_weak();
@@ -516,7 +529,7 @@ fn tick_sleep(ui: &App, player: &Player, sleep: &Rc<RefCell<SleepTimer>>) {
 }
 
 /// Состояние плеера → свойства окна и сцена волны.
-fn sync(ui: &App, player: &Player, wave: &Rc<RefCell<Option<wave_gl::Wave>>>, queue: &Rc<RefCell<Vec<String>>>) {
+fn sync(ui: &App, player: &Player, wave: &Rc<RefCell<Option<WaveScene>>>, queue: &Rc<RefCell<Vec<String>>>) {
     let s = player.state();
     now::set_uid(&s.uid);
     now::track_changed(s.track.as_ref());
@@ -774,6 +787,35 @@ fn load_icons(mut icon: impl FnMut(&str) -> Option<slint::Image>) -> Icons {
         logout: icon("ic_logout_24"),
         open: icon("ui_kit_ic_open_new_24"),
     }
+}
+
+/// Волна на iOS: кадр считается на процессоре и ставится картинкой под интерфейс, до 30 раз
+/// в секунду, пока пятно движется или идёт переход цветов.
+#[cfg(target_os = "ios")]
+fn install_wave_cpu(ui: &App, wave: Rc<RefCell<Option<WaveScene>>>) {
+    *wave.borrow_mut() = Some(wave_cpu::Wave::new());
+    let weak = ui.as_weak();
+    let mut drawn = false;
+    let timer = slint::Timer::default();
+    timer.start(slint::TimerMode::Repeated, Duration::from_millis(33), move || {
+        let Some(ui) = weak.upgrade() else { return };
+        let mut wave = wave.borrow_mut();
+        let Some(w) = wave.as_mut() else { return };
+        let moving = ui.get_wave_moving();
+        if drawn && !moving && !w.animating() {
+            return;
+        }
+        let size = ui.window().size().to_logical(ui.window().scale_factor());
+        if size.width <= 0.0 || size.height <= 0.0 {
+            return;
+        }
+        // Со сдвигом кадр шире окна, чтобы центр пятна встал куда надо (как в wave_gl).
+        let extra = ui.get_wave_shift().abs() * 2.0;
+        ui.set_wave_image(w.frame(size.width + extra, size.height, moving));
+        drawn = true;
+    });
+    // Таймер нужен, пока живёт приложение.
+    std::mem::forget(timer);
 }
 
 /// Шейдер волны рисуется перед интерфейсом в каждом кадре, пока окно на экране.
