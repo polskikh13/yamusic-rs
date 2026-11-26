@@ -160,6 +160,20 @@ APK весит около 11 МБ. Играет в фоне, управляет�
 **Обновление.** В профиле появится «Доступна версия …». Кнопка скачает новый APK, его нужно
 открыть и установить поверх, вход и настройки сохранятся.
 
+### iOS (альфа)
+
+Готового файла в релизах пока нет: IPA без подписи собирает GitHub Actions (задание `ios`,
+артефакт `ipa`) или `ios/build.sh` на Mac. Без подписи iPhone его не поставит, поэтому IPA
+ставится через [Sideloadly](https://sideloadly.io) или [AltStore](https://altstore.io) с Windows
+или Mac: они подписывают файл вашим Apple ID. С бесплатным Apple ID подпись живёт 7 дней, потом
+приложение нужно переподписать тем же способом.
+
+Нужен iOS 15 или новее. Интерфейс тот же, что у Android-версии. Играет в фоне, управляется
+с экрана блокировки, из Пункта управления и кнопками наушников. Скачанные треки лежат в «Файлах»,
+в папке приложения. Шрифты и иконки скачиваются с music.yandex.ru: читать файлы другого приложения
+iOS не даёт. Фона «Моей волны» пока нет, потому что шейдер написан на OpenGL, а Slint на iOS
+рисует через Metal.
+
 ## Какие системы поддерживаются
 
 | Система | Состояние |
@@ -171,6 +185,7 @@ APK весит около 11 МБ. Играет в фоне, управляет�
 | **Linux** x86_64 | Бета. Нужна glibc 2.35 или новее: Ubuntu 22.04+, Debian 12+, Mint 21+, Fedora, openSUSE, Arch и другие. Проверено на Ubuntu 22.04, Debian 13, Fedora 45 и Arch, в Wayland и X11. Звук через PipeWire, PulseAudio или ALSA. Медиаклавиши и плеер в панели GNOME и KDE работают через MPRIS. Трея пока нет, поэтому закрытие окна закрывает приложение. О проблемах пишите в [issues](https://github.com/SpolzerMod/yamusic-rs/issues). |
 | **Linux** ARM64 | Бета, те же условия, что для x86_64. Проверено на ALT Linux (Asahi) на MacBook Pro M1. |
 | **Android** 8+ arm64 | Бета. Проверено на эмуляторе с Android 15. Шрифты и иконки берутся из установленной Яндекс Музыки, без неё скачиваются с music.yandex.ru. |
+| **iOS** 15+ | Альфа: ещё не проверялась на устройстве. Ставится через Sideloadly или AltStore, см. [выше](#ios-альфа). |
 | macOS | Не поддерживается. Есть сторонний порт: [rnikitin/yamusic-rs](https://github.com/rnikitin/yamusic-rs), сборка для Apple Silicon и Intel лежит в его [релизах](https://github.com/rnikitin/yamusic-rs/releases). |
 
 > Порт под macOS — отдельный проект. Он основан на коде этого репозитория, но ведётся независимо:
@@ -381,6 +396,14 @@ sudo pacman -S --needed base-devel alsa-lib fontconfig freetype2 wayland libxkbc
 ([cargo-deb](https://github.com/kornelski/cargo-deb)), `cargo generate-rpm`
 ([cargo-generate-rpm](https://github.com/cat-in-136/cargo-generate-rpm)) и `tools/appimage.sh`.
 Релизы собираются на Ubuntu 22.04: собранное на более новой системе потребует её версию glibc.
+
+#### iOS
+
+Нужен Mac с Xcode. `ios/build.sh` собирает `ios/target/ios/yamusic-rs.ipa` без подписи,
+`ios/build.sh --sim` ставит и запускает приложение в открытом симуляторе (Apple Silicon).
+Крейт `ios/` собирает тот же `android/src/lib.rs` и интерфейс `android/ui`: своё у iOS только
+`ios/src/sys.rs` (UIKit) и `ios/src/media.rs` (экран блокировки, аудиосессия). Код, общий для
+телефонов, в `src/` отмечен `cfg(mobile)`.
 
 #### Если Skia не скачивается
 

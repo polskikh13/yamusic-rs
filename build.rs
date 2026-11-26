@@ -4,6 +4,8 @@ const APP_NAME: &str = "Яндекс Музыка RS";
 
 fn main() {
     println!("cargo:rustc-env=APP_NAME={APP_NAME}");
+    // `mobile` ставят сборки android/ и ios/ для общего кода из src/; на десктопе его нет.
+    println!("cargo::rustc-check-cfg=cfg(mobile)");
     slint_build::compile_with_config(
         "ui/app.slint",
         slint_build::CompilerConfiguration::new().with_style("fluent".into()),

@@ -1,5 +1,6 @@
-//! Яндекс Музыка RS для Android. Общий с десктопом код (API, вход, плеер волны) берётся
+//! Яндекс Музыка RS для Android и iOS. Общий с десктопом код (API, вход, плеер волны) берётся
 //! из ../src, здесь только окно, системные вызовы и фон «Моей волны».
+//! Крейт ios/ собирает этот же файл: своё у iOS только `sys` и `media` из ../ios/src.
 
 #[path = "../../src/ahead.rs"]
 mod ahead;
@@ -64,14 +65,24 @@ mod ynison;
 mod blob;
 mod download;
 mod home;
+#[cfg(not(target_os = "ios"))]
+mod media;
+#[cfg(target_os = "ios")]
+#[path = "../../ios/src/media.rs"]
 mod media;
 mod mood;
 mod now;
 mod original;
 mod pages;
 mod profile;
+#[cfg(not(target_os = "ios"))]
+mod sys;
+#[cfg(target_os = "ios")]
+#[path = "../../ios/src/sys.rs"]
 mod sys;
 mod vector;
+// На iOS у Slint нет OpenGL: шейдер волны там не ставится, остаётся только тип для `sync`.
+#[cfg_attr(target_os = "ios", allow(dead_code))]
 mod wave_gl;
 
 use api::{Api, Track};
@@ -118,6 +129,7 @@ struct SleepTimer {
     after_track: Option<String>,
 }
 
+#[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: slint::android::AndroidApp) {
     // Slint ставит платформу раз на процесс: второе окно в живом процессе останется чёрным.
@@ -135,8 +147,25 @@ fn android_main(app: slint::android::AndroidApp) {
     }
 }
 
+/// Точка входа iOS: её зовёт `main` из ios/src/main.rs на главном потоке. Платформу Slint
+/// (winit, Skia на Metal) выбирает сам.
+#[cfg(target_os = "ios")]
+pub fn ios_main() {
+    sys::init();
+    if let Err(e) = run() {
+        log(format!("окно: {e}"));
+    }
+}
+
+/// Система просит освободить память: обложки скачаются заново, когда понадобятся.
+#[cfg(target_os = "ios")]
+pub(crate) fn low_memory() {
+    IMAGES.with(|i| i.clear());
+}
+
 /// Приложение скрыто или системе не хватает памяти: обложки скачаются заново, когда понадобятся,
 /// а освобождённое аллокатор сразу отдаёт системе.
+#[cfg(target_os = "android")]
 fn on_lifecycle(event: &slint::android::android_activity::PollEvent<'_>) {
     use slint::android::android_activity::{MainEvent, PollEvent};
     if let PollEvent::Main(MainEvent::Stop | MainEvent::LowMemory) = event {
@@ -156,6 +185,9 @@ fn run() -> Result<(), slint::PlatformError> {
     if let Some(top) = sys::status_bar_height() {
         ui.global::<T>().set_top(top);
     }
+    // На iOS окно появляется только внутри цикла событий: отступ под «чёлку» ставим потом.
+    #[cfg(target_os = "ios")]
+    sys::watch_safe_area(&ui);
     let shader = match original::Apk::open_installed() {
         Some(mut apk) => {
             original::register_fonts(&mut apk);
@@ -182,7 +214,10 @@ fn run() -> Result<(), slint::PlatformError> {
 
     let wave: Rc<RefCell<Option<wave_gl::Wave>>> = Default::default();
     if let Some(src) = shader {
+        #[cfg(target_os = "android")]
         install_wave(&ui, src, wave.clone());
+        #[cfg(not(target_os = "android"))]
+        let _ = src;
     }
 
     let weak = ui.as_weak();
@@ -742,6 +777,7 @@ fn load_icons(mut icon: impl FnMut(&str) -> Option<slint::Image>) -> Icons {
 }
 
 /// Шейдер волны рисуется перед интерфейсом в каждом кадре, пока окно на экране.
+#[cfg(target_os = "android")]
 fn install_wave(ui: &App, fragment: String, wave: Rc<RefCell<Option<wave_gl::Wave>>>) {
     let weak = ui.as_weak();
     let res = ui.window().set_rendering_notifier(move |state, api| match state {

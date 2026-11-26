@@ -117,7 +117,7 @@ pub enum Cmd {
     Loudness(Loudness),
     LikeTrack(Track, Option<LikeCompleted>),
     Dislike(Option<LikeCompleted>),
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     DislikeTrack(Track),
     Wave(Source),
     /// Заново начать «Мою волну» с настройками (seeds `setting…`).
@@ -1366,7 +1366,7 @@ impl Engine {
                 self.write_reaction(&track, Reaction::Dislike, remove, done);
                 if !remove { self.advance(End::Dislike); }
             }
-            #[cfg(target_os = "android")]
+            #[cfg(mobile)]
             Cmd::DislikeTrack(track) => self.write_reaction(&track, Reaction::Dislike, false, None),
             Cmd::Wave(src) => self.start_wave(src, true),
             Cmd::TuneWave(settings) => {
