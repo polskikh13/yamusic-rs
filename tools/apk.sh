@@ -10,7 +10,11 @@ cd "$(dirname "$0")/.."
 : "${ANDROID_HOME:?ANDROID_HOME не задан}"
 : "${JAVA_HOME:?JAVA_HOME не задан}"
 latest() { ls -d "$1"/*/ | sort -V | tail -1 | sed 's:/$::'; }
-NDK=$(latest "$ANDROID_HOME/ndk")
+# Skia из Slint 1.19 собрана под libc++ из NDK r30: с libc++_shared.so из NDK постарше APK
+# падает при запуске (нет std::__hash_memory).
+NDK_VERSION=30.0.16248370
+NDK="$ANDROID_HOME/ndk/$NDK_VERSION"
+[ -d "$NDK" ] || { echo "Нет NDK $NDK_VERSION: sdkmanager \"ndk;$NDK_VERSION\"" >&2; exit 1; }
 BT=$(latest "$ANDROID_HOME/build-tools")
 # Как targetSdkVersion в манифесте: у раннера самая новая платформа бывает предварительной.
 PLATFORM="$ANDROID_HOME/platforms/android-35"

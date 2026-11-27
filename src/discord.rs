@@ -5,6 +5,7 @@ use crate::api::Track;
 use crate::config::log;
 use crate::player::{Player, Status};
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -15,6 +16,16 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub const APP_ID: &str = "1570815647133474856";
 /// Ссылка второй кнопки статуса.
 const PROJECT_URL: &str = env!("CARGO_PKG_REPOSITORY");
+/// Discord принимает не больше 5 обновлений статуса за 20 секунд.
+const RATE_MAX: usize = 5;
+const RATE_WINDOW: Duration = Duration::from_secs(20);
+/// Discord ограничивает тексты 128 символами, а подпись кнопки — 32, но сервер
+/// считает именно байты UTF-8. Если лимит превышен, он молча выбрасывает всю
+/// активность, хотя клиент отвечает «принято»: статус виден только себе.
+const TEXT_MAX: usize = 128;
+const LABEL_MAX: usize = 32;
+/// «Слушать в Яндекс Музыке» — 43 байта, и статус перестаёт уходить другим.
+const LISTEN_LABEL: &str = "Слушать в Музыке"; // 30 байт
 
 #[derive(Clone, Default)]
 pub struct DiscordCfg {
@@ -54,6 +65,20 @@ fn open_pipe(i: u32) -> Option<Pipe> {
 
 fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+/// Отмечает отправку в лимите Discord: 5 обновлений за 20 секунд. false — лимит исчерпан,
+/// отправку лучше повторить на следующем круге, а не терять.
+fn take_slot(sends: &mut VecDeque<Instant>) -> bool {
+    let now = Instant::now();
+    while sends.front().is_some_and(|t| now.duration_since(*t) >= RATE_WINDOW) {
+        sends.pop_front();
+    }
+    if sends.len() >= RATE_MAX {
+        return false;
+    }
+    sends.push_back(now);
+    true
 }
 
 impl Conn {
@@ -103,6 +128,11 @@ impl Conn {
 
     /// Ok(None) — принято, Ok(Some(msg)) — Discord вернул ошибку на эту активность.
     fn set_activity(&mut self, activity: Value) -> Result<Option<String>, String> {
+        // YAMUSIC_DISCORD_DEBUG=1 — в журнал попадают отправленный JSON и ответ Discord.
+        let debug = std::env::var_os("YAMUSIC_DISCORD_DEBUG").is_some();
+        if debug {
+            log(format!("discord TX {}", serde_json::to_string(&activity).unwrap_or_default()));
+        }
         self.nonce += 1;
         let nonce = self.nonce.to_string();
         self.send(
@@ -124,7 +154,13 @@ impl Conn {
                     }
                     if v.get("evt").and_then(|e| e.as_str()) == Some("ERROR") {
                         let msg = v.pointer("/data/message").and_then(|m| m.as_str()).unwrap_or("?");
+                        if debug {
+                            log(format!("discord RX {}", serde_json::to_string(&v).unwrap_or_default()));
+                        }
                         return Ok(Some(msg.to_string()));
+                    }
+                    if debug {
+                        log(format!("discord OK {}", serde_json::to_string(&v).unwrap_or_default()));
                     }
                     return Ok(None);
                 }
@@ -133,40 +169,53 @@ impl Conn {
     }
 }
 
-fn fit(s: &str, fallback: &str) -> String {
+fn fit(s: &str, max: usize, fallback: &str) -> String {
     let s = s.trim();
     let s = if s.chars().count() < 2 { fallback } else { s };
-    s.chars().take(128).collect()
+    let mut out = String::new();
+    for c in s.chars() {
+        // Режем по байтам, не разрывая многобайтовый символ.
+        if out.len() + c.len_utf8() > max {
+            break;
+        }
+        out.push(c);
+    }
+    out.trim_end().to_string()
 }
 
-fn activity(t: &Track, start: i64, end: Option<i64>, with_display_type: bool) -> Value {
+fn activity(t: &Track, start: i64, end: Option<i64>, playing: bool, listening: bool, with_display_type: bool) -> Value {
+    let kind = if listening { 2 } else { 0 };
     let url = match &t.album_id {
         Some(a) => format!("https://music.yandex.ru/album/{a}/track/{}", t.id),
         None => format!("https://music.yandex.ru/track/{}", t.id),
     };
     let mut a = json!({
-        "type": 2, // «Слушает»
-        "details": fit(&t.title, "Без названия"),
-        "state": fit(&t.artists, "Моя волна"),
-        "timestamps": { "start": start },
+        // 2 — «Слушает», 0 — «Играет»: так показываем, если клиент не принял «Слушает».
+        "type": kind,
+        "details": fit(&t.title, TEXT_MAX, "Без названия"),
+        "state": fit(&t.artists, TEXT_MAX, "Моя волна"),
         "buttons": [
-            { "label": "Слушать в Яндекс Музыке", "url": url },
-            { "label": env!("APP_NAME"), "url": PROJECT_URL },
+            { "label": LISTEN_LABEL, "url": url },
+            { "label": fit(env!("APP_NAME"), LABEL_MAX, "yamusic-rs"), "url": PROJECT_URL },
         ],
     });
-    if let Some(end) = end {
-        a["timestamps"]["end"] = json!(end);
+    if playing {
+        // На паузе меток нет: иначе прогресс в профиле продолжал бы идти.
+        a["timestamps"] = json!({ "start": start });
+        if let Some(end) = end {
+            a["timestamps"]["end"] = json!(end);
+        }
     }
     if with_display_type {
         // В списке участников: «Слушает <название трека>», а не имя приложения.
         a["status_display_type"] = json!(2);
     }
-    let album = if t.album_title.is_empty() { env!("APP_NAME").to_string() } else { fit(&t.album_title, env!("APP_NAME")) };
+    let album = fit(&t.album_title, TEXT_MAX, env!("APP_NAME"));
     a["assets"] = json!({
         "large_image": t.cover_url(400).unwrap_or_else(|| "logo".into()),
         "large_text": album,
         "small_image": "logo",
-        "small_text": env!("APP_NAME"),
+        "small_text": fit(env!("APP_NAME"), TEXT_MAX, "yamusic-rs"),
     });
     a
 }
@@ -194,9 +243,15 @@ impl Discord {
         let mut conn: Option<Conn> = None;
         let mut conn_app = String::new();
         let mut next_try = Instant::now();
-        // Что сейчас показано: (id трека, время старта). None — ничего.
-        let mut shown: Option<(String, i64)> = None;
+        // Что сейчас показано: (id трека, время старта, играет). None — ничего.
+        let mut shown: Option<(String, i64, bool)> = None;
         let mut display_type_ok = true;
+        // Клиент может не знать «Слушает» (type 2) — тогда показываем статус как «Играет».
+        let mut listening_ok = true;
+        // Discord отклонил саму активность: не долбим его одной и той же ошибкой каждую секунду.
+        let mut retry_at = Instant::now();
+        // Отправки за последние 20 секунд: Discord принимает не больше пяти.
+        let mut sends: VecDeque<Instant> = VecDeque::new();
         loop {
             thread::sleep(Duration::from_secs(1));
             let cfg = self.cfg.lock().unwrap().clone();
@@ -209,6 +264,7 @@ impl Discord {
                 shown = None;
                 conn_app = app.clone();
                 next_try = Instant::now();
+                retry_at = Instant::now();
             }
             if !cfg.enabled {
                 self.set_status("Выключено");
@@ -226,7 +282,8 @@ impl Discord {
                     Ok(c) => {
                         conn = Some(c);
                         shown = None;
-                        self.set_status("Подключено, статус виден в профиле");
+                        sends.clear(); // у нового соединения свежий лимит
+                        self.set_status("Подключено, статус отправлен");
                     }
                     Err(e) => {
                         self.set_status(e);
@@ -238,32 +295,50 @@ impl Discord {
             let Some(c) = conn.as_mut() else { continue };
 
             let s = player.state();
-            let want = if s.status == Status::Ready && s.playing && !s.loading { s.track.clone() } else { None };
-            let res = match want {
+            // Загрузка следующего трека и пауза не должны гасить статус: иначе он мигает
+            // и пропадает из профиля на каждой смене трека.
+            let track = if s.status == Status::Ready { s.track.clone() } else { None };
+            let res = match track {
+                Some(_) if s.loading => Ok(()), // дождёмся трека, показанное оставляем как есть
                 Some(t) => {
+                    let playing = s.playing;
                     let start = now_ms() - (s.position * 1000.0) as i64;
                     let end = (s.duration > 1.0).then(|| start + (s.duration * 1000.0) as i64);
                     let changed = match &shown {
-                        Some((id, st)) => *id != t.id || (st - start).abs() > 3000, // новый трек или перемотка
+                        // Новый трек, пауза/возобновление или перемотка.
+                        Some((id, st, was)) => *id != t.id || *was != playing || (playing && (st - start).abs() > 3000),
                         None => true,
                     };
-                    if !changed {
+                    // Лимит Discord исчерпан или прошлый отказ: подождём следующий круг,
+                    // трек не потеряется.
+                    if !changed || Instant::now() < retry_at || !take_slot(&mut sends) {
                         Ok(())
                     } else {
-                        let mut r = c.set_activity(activity(&t, start, end, display_type_ok));
-                        if display_type_ok && matches!(&r, Ok(Some(_))) {
+                        let mut r = c.set_activity(activity(&t, start, end, playing, listening_ok, display_type_ok));
+                        if matches!(&r, Ok(Some(_))) {
                             // Старый клиент Discord не знает status_display_type — повторим без него.
-                            display_type_ok = false;
-                            r = c.set_activity(activity(&t, start, end, false));
+                            if display_type_ok {
+                                display_type_ok = false;
+                                r = c.set_activity(activity(&t, start, end, playing, listening_ok, false));
+                            }
+                            // Совсем старый клиент не знает «Слушает» — покажем как «Играет».
+                            if listening_ok && matches!(&r, Ok(Some(_))) {
+                                listening_ok = false;
+                                r = c.set_activity(activity(&t, start, end, playing, false, false));
+                            }
                         }
                         match r {
                             Ok(None) => {
-                                shown = Some((t.id.clone(), start));
+                                shown = Some((t.id.clone(), start, playing));
+                                self.set_status("Подключено, статус отправлен");
                                 Ok(())
                             }
                             Ok(Some(msg)) => {
+                                // Трек не считаем показанным: иначе он больше не переотправится,
+                                // а в настройках будет написано, что статус уже стоит.
                                 log(format!("discord SET_ACTIVITY: {msg}"));
-                                shown = Some((t.id.clone(), start)); // не долбим Discord повторами
+                                retry_at = Instant::now() + Duration::from_secs(30);
+                                self.set_status("Discord отклонил статус, повторю позже");
                                 Ok(())
                             }
                             Err(e) => Err(e),
@@ -271,8 +346,12 @@ impl Discord {
                     }
                 }
                 None if shown.is_some() => {
-                    shown = None;
-                    c.set_activity(Value::Null).map(|_| ())
+                    if !take_slot(&mut sends) {
+                        Ok(())
+                    } else {
+                        shown = None;
+                        c.set_activity(Value::Null).map(|_| ())
+                    }
                 }
                 None => Ok(()),
             };
@@ -298,5 +377,19 @@ mod tests {
         let r = Conn::connect("1");
         println!("{:?}", r.as_ref().err());
         assert!(matches!(r, Err(ref e) if e.contains("Application ID")));
+    }
+
+    /// Discord считает лимиты в байтах: кириллическая подпись кнопки должна
+    /// уложиться в 32 байта, иначе сервер выбрасывает всю активность.
+    #[test]
+    fn fit_counts_utf8_bytes() {
+        let label = fit("Слушать в Яндекс Музыке", LABEL_MAX, "Слушать");
+        assert!(label.len() <= LABEL_MAX, "{label:?} — {} байт", label.len());
+        assert!(label.starts_with("Слушать"));
+        assert_eq!(fit("  title  ", TEXT_MAX, ""), "title");
+        assert_eq!(fit("", TEXT_MAX, "fallback"), "fallback");
+        let long = "я".repeat(200);
+        assert!(fit(&long, TEXT_MAX, "").len() <= TEXT_MAX);
+        assert_eq!(fit(&long, TEXT_MAX, "").chars().count(), TEXT_MAX / 2);
     }
 }

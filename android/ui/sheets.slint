@@ -231,8 +231,8 @@ export component TrackSheet inherits Sheet {
     MenuItem {
         y: 660px;
         icon: Now.icons.dislike;
-        text: "Не нравится";
-        grey: true;
+        text: Pages.menu-disliked ? "Убрать из «Не нравится»" : "Не нравится";
+        grey: !Pages.menu-disliked;
         clicked => {
             root.open = false;
             Pages.menu-action(8);
@@ -570,6 +570,64 @@ export component MenuSheet inherits Sheet {
         clicked => {
             root.open = false;
             Now.dislike();
+        }
+    }
+}
+
+component SortItem inherits Rectangle {
+    in property <string> text;
+    in property <int> value;
+    height: 56px;
+    Text {
+        x: 16px;
+        text: root.text;
+        color: T.fg.with-alpha(0.90);
+        font-size: 16px;
+        vertical-alignment: center;
+    }
+    if Pages.sort == root.value: Image {
+        x: parent.width - 40px;
+        width: 24px;
+        height: 24px;
+        source: Now.icons.check;
+        colorize: T.fg;
+    }
+    TouchArea {
+        clicked => {
+            Pages.sort = root.value;
+            Pages.sort-open = false;
+            Pages.sort-picked(root.value);
+        }
+    }
+}
+
+/// Сортировка «Моих плейлистов», как шторка оригинала.
+export component SortSheet inherits Sheet {
+    open <=> Pages.sort-open;
+    panel-height: 288px;
+    Text {
+        y: 30px;
+        width: parent.width;
+        text: "Сортировка";
+        color: T.fg;
+        font-family: "YS Music Headline";
+        font-weight: 700;
+        font-size: 22px;
+        horizontal-alignment: center;
+    }
+    Rectangle {
+        x: 12px;
+        y: 84px;
+        width: parent.width - 24px;
+        height: 170px;
+        border-radius: 12px;
+        background: T.fg.with-alpha(0.06);
+        VerticalLayout {
+            SortItem { text: "По дате добавления"; value: 0; }
+            Rectangle { height: 1px; background: T.fg.with-alpha(0.08); }
+            SortItem { text: "Недавно обновлённые"; value: 1; }
+            Rectangle { height: 1px; background: T.fg.with-alpha(0.08); }
+            SortItem { text: "По алфавиту"; value: 2; }
         }
     }
 }

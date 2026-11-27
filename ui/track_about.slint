@@ -15,7 +15,7 @@ component InfoRow inherits VerticalLayout {
     if line.title != "": Text {
         text: line.title;
         wrap: word-wrap;
-        min-height: Theme.font-line-height-label-l;
+        height: max(Theme.font-line-height-label-l, self.preferred-height);
         font-family: "YS Music Headline";
         font-size: Theme.font-size-label-l;
         font-weight: 500;
@@ -24,7 +24,7 @@ component InfoRow inherits VerticalLayout {
     Text {
         text: line.value;
         wrap: word-wrap;
-        min-height: Theme.font-line-height-label-l;
+        height: max(Theme.font-line-height-label-l, self.preferred-height);
         font-size: Theme.font-size-label-l;
         font-weight: 500;
         color: line.link && link-ta.has-hover ? Theme.controls-color-primary-text-enabled-variant : Theme.controls-color-primary-text-enabled;
@@ -60,43 +60,33 @@ export component TrackAboutModal inherits Rectangle {
     drop-shadow-color: Theme.dark ? #0000007a : #0000003d;
     TouchArea { }
 
-    // Шапка: поля 20 сверху и снизу, 16 по бокам; крестик 32 справа.
-    header := HorizontalLayout {
+    // Название и версия переносятся вместе, высота шапки зависит от числа строк.
+    header := Rectangle {
         x: 17px;
         y: 1px;
         width: root.width - 34px;
-        height: 72px;
-        padding-top: Theme.spacer-size-xl;
-        padding-bottom: Theme.spacer-size-xl;
-        spacing: Theme.spacer-size-xxs;
-        HorizontalLayout {
-            horizontal-stretch: 1;
-            spacing: 6px;
-            alignment: start;
-            Text {
-                text: App.track-about-title;
-                overflow: elide;
-                vertical-alignment: center;
-                font-family: "YS Music Headline";
-                font-size: Theme.font-size-headline-xs;
-                font-weight: 700;
-                color: Theme.controls-color-primary-text-enabled-variant;
-            }
-            if App.track-about-version != "": Text {
-                text: App.track-about-version;
-                overflow: elide;
-                vertical-alignment: center;
-                font-family: "YS Music Headline";
-                font-size: Theme.font-size-headline-xs;
-                font-weight: 700;
-                color: Theme.controls-color-primary-text-enabled;
-            }
-            if App.track-about-explicit: VerticalLayout {
-                alignment: center;
-                ExplicitMark { size: 16px; }
-            }
+        height: 2 * Theme.spacer-size-xl + max(close.height, title.height);
+        title := Text {
+            x: 0px;
+            y: Theme.spacer-size-xl + max(0px, (close.height - self.height) / 2);
+            width: close.x - Theme.spacer-size-xxs - (App.track-about-explicit ? 22px : 0px);
+            height: min(3 * Theme.font-line-height-headline-xs, self.preferred-height);
+            text: App.track-about-title + (App.track-about-version == "" ? "" : " " + App.track-about-version);
+            wrap: word-wrap;
+            overflow: elide;
+            font-family: "YS Music Headline";
+            font-size: Theme.font-size-headline-xs;
+            font-weight: 700;
+            color: Theme.controls-color-primary-text-enabled-variant;
         }
-        Rectangle {
+        if App.track-about-explicit: ExplicitMark {
+            x: min(title.width, title.preferred-width) + 6px;
+            y: Theme.spacer-size-xl + 8px;
+            size: 16px;
+        }
+        close := Rectangle {
+            x: parent.width - self.width;
+            y: Theme.spacer-size-xl;
             width: 32px;
             height: 32px;
             border-radius: 16px;
@@ -122,6 +112,7 @@ export component TrackAboutModal inherits Rectangle {
         body := VerticalLayout {
             x: Theme.spacer-size-l;
             width: root.width - 2px - 2 * Theme.spacer-size-l - 15px;
+            height: self.preferred-height;
             padding-top: Theme.spacer-size-xl;
             spacing: Theme.spacer-size-l;
             alignment: start;

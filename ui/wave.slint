@@ -46,7 +46,7 @@ component GlassButton inherits Rectangle {
             if !root.scroll-volume {
                 return reject;
             }
-            App.set-volume(max(0, min(1, App.volume + (e.delta-y > 0 ? 0.02 : -0.02))));
+            App.set-volume(App.wheel-volume(e.delta-y));
             accept
         }
         pointer-event(e) => {
@@ -143,10 +143,12 @@ component WheelSlot inherits Rectangle {
 
 // Заголовок волны: самый крупный размер от 104 до 48, при котором слова не рвутся
 // и текст влезает по высоте (не больше 4 строк), — как useDynamicText оригинала.
+// С фото исполнителя (`compact`) — от 64 до 24 и не больше двух строк (`iB` оригинала).
 component FitTitle inherits Rectangle {
     in property <string> text;
     in property <string> longest;
     in property <bool> link;
+    in property <bool> compact;
     callback clicked;
 
     property <length> w: root.width;
@@ -158,6 +160,9 @@ component FitTitle inherits Rectangle {
     p72 := Text { visible: false; width: w; text: root.text; wrap: word-wrap; font-family: "YS Music Headline"; font-weight: 700; font-size: 72px; }
     p64 := Text { visible: false; width: w; text: root.text; wrap: word-wrap; font-family: "YS Music Headline"; font-weight: 700; font-size: 64px; }
     p56 := Text { visible: false; width: w; text: root.text; wrap: word-wrap; font-family: "YS Music Headline"; font-weight: 700; font-size: 56px; }
+    p48 := Text { visible: false; width: w; text: root.text; wrap: word-wrap; font-family: "YS Music Headline"; font-weight: 700; font-size: 48px; }
+    p40 := Text { visible: false; width: w; text: root.text; wrap: word-wrap; font-family: "YS Music Headline"; font-weight: 700; font-size: 40px; }
+    p32 := Text { visible: false; width: w; text: root.text; wrap: word-wrap; font-family: "YS Music Headline"; font-weight: 700; font-size: 32px; }
     w104 := Text { visible: false; text: root.longest; font-family: "YS Music Headline"; font-weight: 700; font-size: 104px; }
     w96 := Text { visible: false; text: root.longest; font-family: "YS Music Headline"; font-weight: 700; font-size: 96px; }
     w88 := Text { visible: false; text: root.longest; font-family: "YS Music Headline"; font-weight: 700; font-size: 88px; }
@@ -165,16 +170,28 @@ component FitTitle inherits Rectangle {
     w72 := Text { visible: false; text: root.longest; font-family: "YS Music Headline"; font-weight: 700; font-size: 72px; }
     w64 := Text { visible: false; text: root.longest; font-family: "YS Music Headline"; font-weight: 700; font-size: 64px; }
     w56 := Text { visible: false; text: root.longest; font-family: "YS Music Headline"; font-weight: 700; font-size: 56px; }
+    w48 := Text { visible: false; text: root.longest; font-family: "YS Music Headline"; font-weight: 700; font-size: 48px; }
+    w40 := Text { visible: false; text: root.longest; font-family: "YS Music Headline"; font-weight: 700; font-size: 40px; }
+    w32 := Text { visible: false; text: root.longest; font-family: "YS Music Headline"; font-weight: 700; font-size: 32px; }
 
+    property <length> top: compact ? 64px : 104px;
+    property <length> bottom: compact ? 24px : 48px;
+    property <int> lines: compact ? 2 : 4;
+    pure function fits(word: length, text: length, s: length) -> bool {
+        return s <= top && s >= bottom && word <= w && text <= min(h, lines * s * 1.25);
+    }
     property <length> size:
-          w104.preferred-width <= w && p104.preferred-height <= min(h, 4 * 104px * 1.25) ? 104px
-        : w96.preferred-width <= w && p96.preferred-height <= min(h, 4 * 96px * 1.25) ? 96px
-        : w88.preferred-width <= w && p88.preferred-height <= min(h, 4 * 88px * 1.25) ? 88px
-        : w80.preferred-width <= w && p80.preferred-height <= min(h, 4 * 80px * 1.25) ? 80px
-        : w72.preferred-width <= w && p72.preferred-height <= min(h, 4 * 72px * 1.25) ? 72px
-        : w64.preferred-width <= w && p64.preferred-height <= min(h, 4 * 64px * 1.25) ? 64px
-        : w56.preferred-width <= w && p56.preferred-height <= min(h, 4 * 56px * 1.25) ? 56px
-        : 48px;
+          fits(w104.preferred-width, p104.preferred-height, 104px) ? 104px
+        : fits(w96.preferred-width, p96.preferred-height, 96px) ? 96px
+        : fits(w88.preferred-width, p88.preferred-height, 88px) ? 88px
+        : fits(w80.preferred-width, p80.preferred-height, 80px) ? 80px
+        : fits(w72.preferred-width, p72.preferred-height, 72px) ? 72px
+        : fits(w64.preferred-width, p64.preferred-height, 64px) ? 64px
+        : fits(w56.preferred-width, p56.preferred-height, 56px) ? 56px
+        : fits(w48.preferred-width, p48.preferred-height, 48px) ? 48px
+        : fits(w40.preferred-width, p40.preferred-height, 40px) ? 40px
+        : fits(w32.preferred-width, p32.preferred-height, 32px) ? 32px
+        : bottom;
 
     shown := Text {
         width: w;
@@ -201,8 +218,77 @@ component FitTitle inherits Rectangle {
     }
 }
 
-// «Челка» над пятном: источник волны и отдельная круглая кнопка сброса. У волны челка со
-// стрелкой открывает её настройки, как VibeContextButton оригинала.
+// Пункт меню волны (`VibeContextButton_menuItem`): поля 8 сверху и снизу, 12 по бокам, значок 20,
+// между значком и подписью 12. У «Нравится» после лайка подпись и значок светлее
+// (`menuItem_active`).
+component VibeMenuItem inherits Rectangle {
+    in property <string> text;
+    in property <image> icon;
+    in property <bool> active;
+    callback clicked;
+    property <brush> ink: root.active || ta.has-hover ? #ffffffe6 : #ffffff80;
+    height: 36px;
+    border-radius: Theme.radius-size-m;
+    background: ta.has-hover ? #ffffff14 : transparent;
+    animate background { duration: App.motion ? 150ms : 0ms; }
+    HorizontalLayout {
+        padding-left: Theme.spacer-size-m;
+        padding-right: Theme.spacer-size-m;
+        spacing: Theme.spacer-size-m;
+        VerticalLayout {
+            alignment: center;
+            Icon { source: root.icon; size: Theme.icon-size-xxs; colorize: root.ink; }
+        }
+        Text {
+            text: root.text;
+            vertical-alignment: center;
+            font-size: Theme.font-size-label-m;
+            font-weight: 500;
+            color: root.ink;
+            animate color { duration: App.motion ? 150ms : 0ms; }
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// Меню волны под челкой (`VibeContextButton_menu`): по ширине пунктов, поля 10 сверху и снизу,
+// 8 по бокам, фон — чёрный на 70%.
+component VibeMenu inherits Rectangle {
+    width: col.preferred-width;
+    height: col.preferred-height;
+    border-radius: Theme.radius-size-xl;
+    background: Theme.controls-color-primary-on-default-enabled.transparentize(30%);
+    TouchArea { }
+    col := VerticalLayout {
+        padding-top: Theme.spacer-size-s;
+        padding-bottom: Theme.spacer-size-s;
+        padding-left: Theme.spacer-size-xs;
+        padding-right: Theme.spacer-size-xs;
+        VibeMenuItem {
+            text: App.wave-pinned ? T.t("Открепить") : T.t("Закрепить");
+            icon: App.wave-pinned ? Icons.m-unpin : Icons.m-pin;
+            clicked => { App.wave-menu-action("pin"); }
+        }
+        VibeMenuItem {
+            text: T.t("Нравится");
+            icon: App.wave-liked ? Icons.m-liked : Icons.m-like;
+            active: App.wave-liked;
+            clicked => { App.wave-menu-action("like"); }
+        }
+        if App.wave-share: VibeMenuItem {
+            text: T.t("Поделиться");
+            icon: Icons.m-share;
+            clicked => { App.wave-menu-action("share"); }
+        }
+    }
+}
+
+// «Челка» над пятном: источник волны и отдельная круглая кнопка сброса. У волны, которую можно
+// закрепить и добавить в Коллекцию, челка со стрелкой открывает меню, как VibeContextButton
+// оригинала: оно под челкой по центру, на 4 ниже (`offsetOptions: 4`).
 component ContextPill inherits Rectangle {
     in property <string> text;
     in property <bool> menu;
@@ -213,6 +299,10 @@ component ContextPill inherits Rectangle {
     property <length> btn: 48px;
     property <length> arrow: root.menu ? 24px : 0px;
     property <length> pill-w: min(label.preferred-width + 48px + arrow, root.width - btn - 4px);
+    if root.menu && root.menu-open: VibeMenu {
+        x: pill.x + (pill.width - self.width) / 2;
+        y: root.height + 4px;
+    }
     pill := Rectangle {
         x: (root.width - pill-w - 4px - btn) / 2;
         width: pill-w;
@@ -399,6 +489,11 @@ component WaveTune inherits Rectangle {
 }
 
 export component WavePage inherits Rectangle {
+    // Сколько окна за краями страницы сверху, справа и снизу (`ui/app.slint`): пятно краем
+    // страницы не обрезается и доходит до краёв окна, как холст оригинала.
+    in property <length> spill-top;
+    in property <length> spill-right;
+    in property <length> spill-bottom;
     // Раскладка оригинала: колесо — левые 40%, справа мета с отступами 24 и 48.
     property <length> wheel-w: root.width * 0.4;
     property <length> text-x: wheel-w + 24px;
@@ -416,21 +511,66 @@ export component WavePage inherits Rectangle {
     property <float> progress: App.duration > 0 ? App.position / App.duration : 0;
     property <float> drag-progress: -1;
     property <float> shown: drag-progress >= 0 ? drag-progress : progress;
-    property <bool> tune-from-top;
 
-    // Пятно: картинка оригинала, перекрашенная под трек. С движением медленно вращается,
-    // дышит и плывёт; периоды взаимно простые, чтобы рисунок не повторялся.
-    Image {
-        property <duration> tick: App.wave-motion ? animation-tick() : 0ms;
-        x: cx - blob / 2 + blob * 0.02 * sin(tick / 11s * 360deg);
-        y: 284px + db - blob / 2 + blob * 0.02 * cos(tick / 13s * 360deg);
+    // Фото исполнителя (`VibePage_artistCover`): занимает блок меты от заголовка до плашки
+    // плеера и прижато к его низу; надпись тогда уходит наверх, в полосу 64 px со сдвигом 16
+    // (`textContainer_withCover`). Фото нет при высоте контейнера `vibe-page` ≤ 640 px
+    // (`@container vibe-page (max-height: 640px)` → `VibePage_artistCover { display: none }`,
+    // `750797f00b76a063.css`); контейнер на 44 px ниже окна (32 сверху и 12 снизу), так что
+    // фото пропадает на окне ≤ 684 px.
+    property <bool> with-cutout: App.has-track && !paused && App.has-cutout && wh > 684px;
+    property <length> meta-top: title-y;
+    property <length> art-h: 496px + dp - meta-top;
+    // `VibeArtistCover_cover`: ширина min(100cqw, (100cqh − 16) · 5/4), соотношение 1,25,
+    // поле 16 сверху; картинка вписана в него целиком.
+    property <length> art-w: min(text-w, (art-h - 16px) * 1.25);
+    property <length> art-box: art-w / 1.25;
+    // Маска оригинала гаснет от 80% высоты блока до его низа; фото прижато к низу блока
+    // и занимает `art-box − 16`, отсюда начало растворения в долях высоты фото.
+    property <float> cutout-from: max(0, min(1, 1 - 0.2 * art-h / max(1px, art-box - 16px)));
+    changed cutout-from => {
+        if with-cutout {
+            App.cutout-fade(self.cutout-from);
+        }
+    }
+
+    // Холст анимации оригинала (`VibePage_vibeAnimation`, `width: 250%`): квадрат в 250% ширины
+    // блока с названием, по его центру.
+    property <length> canvas: text-w * 2.5;
+    property <length> canvas-x: cx - canvas / 2;
+    property <length> canvas-y: 284px + db - canvas / 2;
+    // Видимая часть холста в долях: за краем окна шейдер считать незачем. Слева край —
+    // сама страница: там меню, пятно под него не заходит.
+    property <{x0: float, y0: float, x1: float, y1: float}> crop: {
+        x0: max(0, -canvas-x / canvas),
+        y0: max(0, (-spill-top - canvas-y) / canvas),
+        x1: min(1, (root.width + spill-right - canvas-x) / canvas),
+        y1: min(1, (root.height + spill-bottom - canvas-y) / canvas),
+    };
+    changed crop => { App.vibe-crop(crop.x0, crop.y0, crop.x1, crop.y1); }
+    init => {
+        App.vibe-crop(crop.x0, crop.y0, crop.x1, crop.y1);
+        App.vibe-mount();
+    }
+
+    // Живое пятно: шейдер оригинала. Прозрачность 0,8 и проявление за секунду уже в кадре.
+    if App.vibe-anim: Image {
+        x: canvas-x + canvas * App.vibe-x;
+        y: canvas-y + canvas * App.vibe-y;
+        width: canvas * App.vibe-w;
+        height: canvas * App.vibe-h;
+        source: App.vibe-frame;
+        image-fit: fill;
+    }
+    // Без движения и в «Лёгком» режиме: картинка оригинала, перекрашенная под трек.
+    if !App.vibe-anim: Image {
+        x: cx - blob / 2;
+        y: 284px + db - blob / 2;
         width: blob;
         height: blob;
         source: App.blob;
         image-fit: contain;
         opacity: 0.8;
-        transform-rotation: tick / 60s * 360deg;
-        transform-scale: 1 + 0.04 * sin(tick / 7s * 360deg);
     }
 
     // Колесо вайбов: бесконечная лента, крутится колёсиком мыши.
@@ -458,8 +598,10 @@ export component WavePage inherits Rectangle {
 
         wheel-input := TouchArea {
             scroll-event(e) => {
-                // В Windows щелчок колёсика даёт 60 px в Slint и 30 px в оригинале (100 × 0,3).
-                wheel.move-to(wheel.offset - e.delta-y * 0.5 / wheel.slide-h, false);
+                // Колесо проходит 0,3 прокрутки, как у оригинала (Swiper, mousewheel.sensitivity: .3):
+                // в Windows щелчок теперь даёт пиксели Chromium. На Linux Slint даёт 60 px на щелчок —
+                // там прежние 30 px.
+                wheel.move-to(wheel.offset - e.delta-y * (App.linux ? 0.5 : 0.3) / wheel.slide-h, false);
                 accept
             }
             for k in (wheel.n > 0 ? wheel.slot-count : 0): WheelSlot {
@@ -494,24 +636,6 @@ export component WavePage inherits Rectangle {
         font-weight: 700;
         color: #ffff00;
     }
-    if App.has-track && App.wave-context: ContextPill {
-        x: text-x;
-        y: 24px;
-        width: text-w;
-        text: App.source-title;
-        menu: App.is-wave;
-        menu-open: App.wave-settings-open;
-        reset => { App.reset-wave(); }
-        toggle => {
-            if App.wave-settings-open {
-                App.wave-settings-open = false;
-            } else {
-                root.tune-from-top = true;
-                App.open-wave-settings();
-            }
-        }
-    }
-
     // Сохраняем размер оригинала, пока заголовок помещается в одну строку.
     if !App.has-track || paused: Rectangle {
         x: text-x;
@@ -540,13 +664,40 @@ export component WavePage inherits Rectangle {
     // Исполнитель крупно: клик открывает его страницу.
     if App.has-track && !paused: FitTitle {
         x: text-x;
-        y: title-y;
+        // С фото: середина полосы 64 px, текст в две строки свисает за неё, как в оригинале.
+        y: with-cutout ? meta-top + 16px + 32px - self.height / 2 : title-y;
         width: text-w;
-        height: 382px + dp - title-y;
+        height: with-cutout ? 2 * 64px * 1.25 : 382px + dp - title-y;
+        compact: with-cutout;
         text: App.artists;
         longest: App.artists-longest;
         link: App.artist-list.length > 0;
         clicked => { App.open-current-artist(0); }
+    }
+
+    // Фото рисуется поверх надписи (в оригинале блок идёт после неё), под курсором растёт
+    // до 1,01 от нижнего края (`VibeArtistCover_root:hover`, ease-in-out).
+    if with-cutout: Rectangle {
+        init => { App.cutout-fade(root.cutout-from); }
+        x: text-x;
+        y: meta-top;
+        width: text-w;
+        height: art-h;
+        transform-origin: { x: self.width / 2, y: self.height };
+        transform-scale: art-ta.has-hover ? 1.01 : 1;
+        animate transform-scale { duration: App.motion ? Theme.duration-transition : 0ms; easing: ease-in-out; }
+        if App.cutout.width > 0: Image {
+            x: (parent.width - root.art-w) / 2;
+            y: parent.height - root.art-box + 16px;
+            width: root.art-w;
+            height: root.art-box - 16px;
+            source: App.cutout;
+            image-fit: contain;
+        }
+        art-ta := TouchArea {
+            mouse-cursor: MouseCursor.pointer;
+            clicked => { App.open-current-artist(0); }
+        }
     }
 
     // Обложка открывает альбом трека, а не плеер на весь экран.
@@ -705,24 +856,39 @@ export component WavePage inherits Rectangle {
         }
     }
 
-    // Настройки «Моей волны» — только у неё самой и пока она не играет, как у оригинала.
+    // Челка со своим меню — поверх заголовка и плеера; клик мимо меню закрывает его.
+    if App.wave-menu-open && App.wave-menu: TouchArea {
+        clicked => { App.wave-menu-open = false; }
+    }
+    if App.has-track && App.wave-context: ContextPill {
+        x: text-x;
+        y: 24px;
+        width: text-w;
+        text: App.source-title;
+        menu: App.wave-menu;
+        menu-open: App.wave-menu-open;
+        reset => {
+            App.wave-menu-open = false;
+            App.reset-wave();
+        }
+        toggle => { App.wave-menu-open = !App.wave-menu-open; }
+    }
+
+    // Настройки «Моей волны» — у неё самой и у волны «Под занятие» (сиды `user:onyourwave`
+    // или `activity:*`, как у кнопки настроек оригинала), пока она не играет.
     tune := TunePill {
         x: cx - self.width / 2;
         y: 664px + dp;
-        visible: !App.wave-context && (!App.has-track || paused);
-        clicked => {
-            root.tune-from-top = false;
-            App.open-wave-settings();
-        }
+        visible: (!App.wave-context || App.wave-tunable) && (!App.has-track || paused);
+        clicked => { App.open-wave-settings(); }
     }
     if App.wave-settings-open: TouchArea {
         clicked => { App.wave-settings-open = false; }
     }
     // Панель справа от кнопки; в узком окне прижимается к правому краю.
-    // Из челки панель открывается под ней.
     if App.wave-settings-open: WaveTune {
-        limit: min(480px, root.tune-from-top ? parent.height - 80px - 16px : parent.height - 32px);
-        x: root.tune-from-top ? clamp(cx - self.width / 2, 16px, parent.width - self.width - 16px) : min(tune.x + tune.width + 12px, parent.width - self.width - 16px);
-        y: root.tune-from-top ? 80px : clamp(tune.y + tune.height - self.height, 16px, parent.height - self.height - 16px);
+        limit: min(480px, parent.height - 32px);
+        x: min(tune.x + tune.width + 12px, parent.width - self.width - 16px);
+        y: clamp(tune.y + tune.height - self.height, 16px, parent.height - self.height - 16px);
     }
 }

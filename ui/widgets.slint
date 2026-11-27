@@ -66,6 +66,7 @@ export global Icons {
     in property <image> play-small;
     in property <image> trailer-small;
     in property <image> like-small;
+    in property <image> best;
     in property <image> liked-small;
     in property <image> pin-small;
     in property <image> pin-filled-small;
@@ -96,6 +97,7 @@ export global Icons {
     in property <image> liked-m;
     in property <image> play-m;
     in property <image> pause-m;
+    in property <image> shuffle-small;
     in property <image> repeat-small;
     in property <image> repeat-one-small;
     in property <image> users;
@@ -229,7 +231,7 @@ export component BarButton inherits Rectangle {
             if !root.scroll-volume {
                 return reject;
             }
-            App.set-volume(max(0, min(1, App.volume + (e.delta-y > 0 ? 0.02 : -0.02))));
+            App.set-volume(App.wheel-volume(e.delta-y));
             accept
         }
     }

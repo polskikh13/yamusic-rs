@@ -115,6 +115,9 @@ component Poster inherits Rectangle {
         width: 400px;
         height: 400px;
         border-radius: Theme.radius-size-m;
+        // Slint 1.19 отбрасывает тень только от фона, обложка внутри её не даёт. Под загруженной
+        // обложкой фон не виден; заглушка полупрозрачная, под ней фона нет.
+        background: App.cover-big.width > 0 ? #000000 : transparent;
         drop-shadow-blur: 24px;
         drop-shadow-offset-y: 4px;
         drop-shadow-color: #00000052;
@@ -135,6 +138,17 @@ component Poster inherits Rectangle {
                 icon: Icons.queue-m;
                 ink: App.fs-mode == 1 ? #ffffff : #ffffff80;
                 clicked => { App.fs-mode = App.fs-mode == 1 ? 0 : 1; }
+            }
+            // «Перемешать» слева, зеркально к повтору, как в SonataFullscreenControlsDesktop
+            // оригинала; в волне её нет (canShuffle).
+            if !App.is-wave: RoundButton {
+                x: 60px;
+                y: 180px;
+                size: 40px;
+                icon: Icons.shuffle-small;
+                icon-size: 20px;
+                ink: App.shuffle ? Theme.controls-color-primary-default-enabled : #ffffff80;
+                clicked => { App.toggle-shuffle(); }
             }
             RoundButton { x: 116px; y: 178px; size: 44px; icon: Icons.prev-small; icon-size: 20px; enabled: App.can-prev; clicked => { App.prev(); } }
             Rectangle {

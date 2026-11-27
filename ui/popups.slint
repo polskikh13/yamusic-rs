@@ -1,7 +1,7 @@
 // Всплывающие окна: громкость, меню трека, настройки звука и эквалайзер.
 
 import { Theme } from "theme.slint";
-import { Icons, Icon } from "widgets.slint";
+import { Icons, Icon, Cover } from "widgets.slint";
 import { T, App, MenuEntry } from "state.slint";
 
 // Вертикальный ползунок громкости над кнопкой: 44×216, радиус 24.
@@ -65,7 +65,7 @@ export component VolumePopup inherits Rectangle {
             }
         }
         scroll-event(e) => {
-            App.set-volume(max(0, min(1, App.volume + (e.delta-y > 0 ? 0.02 : -0.02))));
+            App.set-volume(App.wheel-volume(e.delta-y));
             accept
         }
     }
@@ -75,6 +75,9 @@ export component MenuRow inherits Rectangle {
     in property <string> text;
     in property <image> icon;
     in property <bool> has-icon: true;
+    // Круглая аватарка 24 px вместо значка: исполнители в подменю, как ArtistItem оригинала.
+    in property <image> avatar;
+    in property <bool> has-avatar;
     in property <bool> submenu;
     in property <bool> active;
     in property <bool> checked;
@@ -93,8 +96,15 @@ export component MenuRow inherits Rectangle {
         size: 20px;
         colorize: ta.has-hover || active ? ink-on : ink;
     }
+    if has-avatar: Cover {
+        x: 12px;
+        width: 24px;
+        height: 24px;
+        round: true;
+        source: avatar;
+    }
     Text {
-        x: has-icon ? 44px : 12px;
+        x: has-icon || has-avatar ? 44px : 12px;
         width: parent.width - self.x - (submenu || checked ? 36px : 12px);
         text: root.text;
         overflow: elide;
@@ -138,6 +148,7 @@ export component TrackMenu inherits Rectangle {
     property <color> shadow: App.menu-themed && !Theme.dark ? #00000029 : #0000007a;
     property <string> sid: App.submenu-open >= 0 && App.submenu-open < App.menu-items.length ? App.menu-items[App.submenu-open].id : "";
     property <bool> share: sid == "share" || sid == "list-share";
+    property <bool> artists: sid == "artists";
 
     function pick(id: string) {
         App.menu-open = false;
@@ -189,7 +200,7 @@ export component TrackMenu inherits Rectangle {
     }
 
     if App.submenu-open >= 0: Rectangle {
-        property <int> n: share ? 2 : App.menu-playlists.length;
+        property <int> n: share ? 2 : artists ? App.menu-artists.length : App.menu-playlists.length;
         property <length> sh: min(n * 36px + 16px, 360px);
         x: box.x + w + 248px > root.width ? box.x - 248px : box.x + w - 4px;
         y: max(8px, min(box.y + 8px + App.submenu-open * 36px - 8px, root.height - sh - 8px));
@@ -220,7 +231,25 @@ export component TrackMenu inherits Rectangle {
             themed: App.menu-themed;
             clicked => { root.pick(root.sid + "-html"); }
         }
-        if !share: Flickable {
+        // «Перейти к исполнителям»: исполнители трека, клик открывает страницу.
+        if artists: Flickable {
+            x: 8px;
+            y: 8px;
+            width: parent.width - 16px;
+            height: parent.height - 16px;
+            content-height: App.menu-artists.length * 36px;
+            for a[i] in App.menu-artists: MenuRow {
+                y: i * 36px;
+                width: parent.width;
+                text: a;
+                has-icon: false;
+                has-avatar: true;
+                avatar: App.menu-artist-covers[i];
+                themed: App.menu-themed;
+                clicked => { root.pick("go-artist:" + i); }
+            }
+        }
+        if !share && !artists: Flickable {
             x: 8px;
             y: 8px;
             width: parent.width - 16px;
@@ -348,6 +377,8 @@ component SoundSettingsContent inherits Rectangle {
     width: 430px;
     height: 353px + eq-block.height;
     property <bool> presets-open;
+    in property <length> visible-top;
+    in property <length> visible-height;
 
     Text {
         x: 21px;
@@ -480,7 +511,7 @@ component SoundSettingsContent inherits Rectangle {
             }
         }
 
-        Rectangle {
+        preset-button := Rectangle {
             x: 25px;
             y: 211px;
             width: 380px;
@@ -511,10 +542,12 @@ component SoundSettingsContent inherits Rectangle {
     }
 
     if presets-open: Rectangle {
+        property <length> bottom: min(eq-block.y + preset-button.y - 4px, root.visible-top + root.visible-height - 8px);
         x: 25px;
-        y: 536px - self.height - 4px;
+        y: bottom - self.height;
         width: 380px;
-        height: min(App.eq-presets.length * 36px + 16px, 420px);
+        height: max(0px, min(App.eq-presets.length * 36px + 16px, 420px, bottom - root.visible-top - 8px));
+        visible: self.height > 16px;
         border-radius: 16px;
         background: Theme.background-color-primary-enabled-popover;
         border-width: 1px;
@@ -526,7 +559,7 @@ component SoundSettingsContent inherits Rectangle {
             x: 8px;
             y: 8px;
             width: parent.width - 16px;
-            height: parent.height - 16px;
+            height: max(0px, parent.height - 16px);
             content-height: App.eq-presets.length * 36px;
             for p[i] in App.eq-presets: MenuRow {
                 y: i * 36px;
@@ -557,11 +590,16 @@ export component SoundSettings inherits Rectangle {
     drop-shadow-color: Theme.dark ? #0000007a : #0000003d;
     TouchArea { }
 
-    Flickable {
+    viewport := Flickable {
         content-width: self.width;
         content-height: settings.height;
         interactive: self.content-height > self.height;
         mouse-drag-pan-enabled: false;
-        settings := SoundSettingsContent { x: 0; y: 0; }
+        settings := SoundSettingsContent {
+            x: 0;
+            y: 0;
+            visible-top: -viewport.content-y;
+            visible-height: viewport.height;
+        }
     }
 }

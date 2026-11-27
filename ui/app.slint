@@ -14,13 +14,14 @@ import { GridPage } from "grid.slint";
 import { AccountMenu, SettingsPage, LoginScreen } from "account.slint";
 import { FullscreenPlayer } from "fullscreen.slint";
 import { TrackMenu, SoundSettings } from "popups.slint";
-import { ShortcutsModal, OverviewModal } from "modals.slint";
+import { ShortcutsModal, OverviewModal, AboutModal } from "modals.slint";
 import { TrackAboutModal } from "track_about.slint";
-import { T, App, Page, TrackItem, PinItem, CardItem, TopArtistItem, WheelEntry, ChartRow, LyricLine, MenuEntry, InfoLine } from "state.slint";
+import { TrackCard } from "track_card.slint";
+import { T, App, Page, TrackItem, PinItem, CardItem, TopArtistItem, WheelEntry, ChartRow, LyricLine, MenuEntry, InfoLine, PlaylistCardAction, PlaylistCardState } from "state.slint";
 import { LandingPage, ChartPage } from "landing.slint";
 import { HistoryPage } from "history.slint";
 
-export { Theme, Icons, App, T, Page, TrackItem, PinItem, CardItem, TopArtistItem, WheelEntry, ChartRow, LyricLine, MenuEntry, InfoLine }
+export { Theme, Icons, App, T, Page, TrackItem, PinItem, CardItem, TopArtistItem, WheelEntry, ChartRow, LyricLine, MenuEntry, InfoLine, PlaylistCardAction, PlaylistCardState }
 
 component CaptionButton inherits Rectangle {
     in property <int> kind; // 0 свернуть, 1 развернуть, 2 закрыть, 3 мини-плеер
@@ -128,7 +129,14 @@ export component AppWindow inherits Window {
 
         if App.page == Page.list: Fade { rise: 8px; ListPage { } }
         if App.page == Page.collection: Fade { rise: 8px; CollectionPage { } }
-        if App.page == Page.wave: Fade { rise: 8px; WavePage { } }
+        if App.page == Page.wave: Fade {
+            rise: 8px;
+            WavePage {
+                spill-top: content.y;
+                spill-right: pad-r;
+                spill-bottom: root.height - content.y - content.height;
+            }
+        }
         if App.page == Page.search: Fade { rise: 8px; SearchPage { } }
         if App.page == Page.artist: Fade { rise: 8px; ArtistPage { } }
         if App.page == Page.artists: Fade { rise: 8px; MyArtistsPage { } }
@@ -232,10 +240,7 @@ export component AppWindow inherits Window {
         sound := SoundSettings { available-height: max(0px, sound-bottom - top); }
     }
 
-    // «О треке» (TrackAboutModalDesktop): панель справа на прозрачной подложке, клик мимо
-    // закрывает. Отступы — как у оригинала в приложении для Windows (`root_withCustomControls`):
-    // 40 от верха и 12 от правого края контента, высота — окно без 156; низ, как у оригинала,
-    // срезает край контента. Поверх полноэкранного плеера — от краёв окна, высота — окно без 64.
+    // «О треке»: панель справа в пределах области контента. Клик мимо закрывает панель.
     if App.track-about-open: TouchArea {
         clicked => { App.track-about-open = false; }
     }
@@ -250,10 +255,23 @@ export component AppWindow inherits Window {
             x: parent.width - self.width - Theme.spacer-size-m;
             y: Theme.spacer-size-xxxxl;
             width: 430px;
-            height: root.height - (App.fullscreen ? 2 * Theme.spacer-size-xxl + Theme.spacer-size-l : 156px);
+            height: max(0px, min(
+                root.height - (App.fullscreen ? 2 * Theme.spacer-size-xxl + Theme.spacer-size-l : 156px),
+                parent.height - self.y - Theme.spacer-size-m
+            ));
             rise: 8px;
             TrackAboutModal { height: parent.height; }
         }
+    }
+
+    // Карточка трека — там же, где «О треке», но без подложки: страницу под ней можно листать.
+    if App.track-card-open && !App.fullscreen: Fade {
+        x: content.x + content.width - self.width - Theme.spacer-size-m;
+        y: content.y + Theme.spacer-size-m;
+        width: 430px;
+        height: max(0px, content.height - 2 * Theme.spacer-size-m);
+        rise: 8px;
+        TrackCard { height: parent.height; }
     }
 
     // «Горячие клавиши»: по центру на затемнённой подложке, клик мимо закрывает.
@@ -268,6 +286,20 @@ export component AppWindow inherits Window {
         height: shortcuts.height;
         rise: 8px;
         shortcuts := ShortcutsModal { }
+    }
+
+    // «О приложении»: так же, по центру на подложке (overlayColor «full» у оригинала).
+    if App.about-open: Rectangle {
+        background: Theme.background-color-primary-enabled-overlay;
+        TouchArea { clicked => { App.about-open = false; } }
+    }
+    if App.about-open: Fade {
+        x: (parent.width - about.width) / 2;
+        y: (parent.height - about.height) / 2;
+        width: about.width;
+        height: about.height;
+        rise: 8px;
+        about := AboutModal { limit: root.height - Theme.spacer-size-xxxxl; }
     }
 
     if App.menu-open: Fade {
@@ -327,15 +359,26 @@ export component AppWindow inherits Window {
     if !App.maximized: ResizeEdge { dir: 3; x: parent.width - 8px; y: parent.height - 8px; width: 8px; height: 8px; }
 
     // Уведомление, как BaseNotification: полупрозрачная плашка, обложка 40 и текст.
-    if App.toast != "": Rectangle {
+    // Въезд и уход — переход Slide из react-toastify (`Toastify--animate` 0,7 с, кривая ease):
+    // въезжает снизу на 110% своей высоты (`slideInUp`), уезжает вниз на 500 px
+    // (`slideOutDown`), прозрачность не меняется. Пока уезжает, на нём прежний текст.
+    Rectangle {
         property <length> cover-w: App.toast-has-cover ? 40px + 8px : 0px;
-        property <float> k: App.motion ? 0 : 1;
-        init => { k = 1; }
-        animate k { duration: App.motion ? 250ms : 0ms; easing: ease-out; }
-        opacity: k;
+        property <string> now: App.toast;
+        property <string> kept;
+        property <bool> on: now != "";
+        property <float> k: on ? 1 : 0;
+        animate k { duration: App.motion ? 700ms : 0ms; easing: ease; }
+        init => { kept = now; }
+        changed now => {
+            if now != "" {
+                kept = now;
+            }
+        }
+        visible: k > 0;
         x: (parent.width - self.width) / 2;
-        y: parent.height - (App.page == Page.wave ? 96px : 140px) + (1 - k) * 16px;
-        width: min(parent.width * 0.9, max(App.toast-has-cover ? 360px : 0px, toast-text.preferred-width + cover-w + 32px));
+        y: parent.height - (App.page == Page.wave ? 96px : 140px) + (1 - k) * (on ? 1.1 * self.height : 500px);
+        width: min(parent.width * 0.9, max(App.toast-has-cover ? 360px : 0px, (App.toast-link != "" ? rich.preferred-width : toast-text.preferred-width) + cover-w + 32px));
         height: 56px;
         border-radius: Theme.radius-size-l;
         background: Theme.background-color-primary-enabled-popover;
@@ -344,22 +387,86 @@ export component AppWindow inherits Window {
         drop-shadow-blur: 20px;
         drop-shadow-offset-y: 1px;
         drop-shadow-color: #0000003d;
-        if App.toast-has-cover: Cover {
+        if App.toast-has-cover && App.toast-icon.width == 0: Cover {
             x: 8px;
             width: 40px;
             height: 40px;
             radius: Theme.radius-size-s;
             source: App.toast-cover;
         }
+        // Тосты повтора и перемешивания вместо обложки показывают значок режима, как
+        // NotificationRepeat/NotificationShuffle оригинала (3684-…js): значок xs на подложке
+        // background-color-secondary-enabled-blur, при выключенном режиме — цвет icon_unset.
+        if App.toast-has-cover && App.toast-icon.width > 0: Rectangle {
+            x: 8px;
+            width: 40px;
+            height: 40px;
+            border-radius: Theme.radius-size-s;
+            background: Theme.background-color-secondary-enabled-blur;
+            Icon {
+                source: App.toast-icon;
+                size: Theme.icon-size-xs;
+                colorize: App.toast-icon-unset ? Theme.controls-color-primary-text-enabled : Theme.controls-color-primary-text-enabled-variant;
+            }
+        }
         toast-text := Text {
             x: 16px + cover-w - (App.toast-has-cover ? 8px : 0px);
             width: parent.width - self.x - 16px;
-            text: App.toast;
+            text: parent.kept;
             overflow: elide;
             vertical-alignment: center;
             color: Theme.controls-color-primary-text-enabled-variant;
             font-size: Theme.font-size-label-m;
             font-weight: 500;
+            visible: App.toast-link == "";
+        }
+        // Как BaseNotificationLike оригинала: текст цветом `primary-text-enabled`, название (не
+        // шире 120) и «Коллекцию» — ссылки цветом `enabled_variant`, под курсором `hovered`.
+        // Между частями пробел и неразрывный пробел.
+        rich := HorizontalLayout {
+            x: toast-text.x;
+            width: parent.width - self.x - 16px;
+            visible: App.toast-link != "";
+            alignment: start;
+            spacing: 7px;
+            Text {
+                text: App.toast;
+                vertical-alignment: center;
+                color: Theme.controls-color-primary-text-enabled;
+                font-size: Theme.font-size-label-m;
+                font-weight: 500;
+            }
+            Text {
+                max-width: 120px;
+                text: App.toast-title;
+                overflow: elide;
+                vertical-alignment: center;
+                color: title-ta.has-hover ? Theme.controls-color-primary-text-hovered : Theme.controls-color-primary-text-enabled-variant;
+                font-size: Theme.font-size-label-m;
+                font-weight: 500;
+                title-ta := TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => { App.toast-open(false); }
+                }
+            }
+            Text {
+                text: App.toast-mid;
+                vertical-alignment: center;
+                color: Theme.controls-color-primary-text-enabled;
+                font-size: Theme.font-size-label-m;
+                font-weight: 500;
+            }
+            Text {
+                text: App.toast-link;
+                vertical-alignment: center;
+                color: link-ta.has-hover ? Theme.controls-color-primary-text-hovered : Theme.controls-color-primary-text-enabled-variant;
+                font-size: Theme.font-size-label-m;
+                font-weight: 500;
+                link-ta := TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => { App.toast-open(true); }
+                }
+            }
         }
     }
 

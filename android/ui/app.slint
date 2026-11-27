@@ -2,7 +2,7 @@
 
 import { Icons, WheelCard, Row, ArtistCard, Now, Cover, T } from "common.slint";
 import { Player } from "player.slint";
-import { MenuSheet, QualitySheet, TimerSheet, TrackSheet, PickSheet, ArtistsSheet, AboutSheet } from "sheets.slint";
+import { MenuSheet, QualitySheet, TimerSheet, TrackSheet, PickSheet, ArtistsSheet, AboutSheet, SortSheet } from "sheets.slint";
 import { Prof, ProfileScreens, AboutPage, LogoutSheet } from "profile.slint";
 import { Pages, PageView, MiniPlayer, PCard, PRow, PBlock, PPage } from "pages.slint";
 
@@ -83,21 +83,30 @@ component LoginScreen inherits Rectangle {
                 font-weight: 700;
                 horizontal-alignment: center;
             }
-            Text {
-                text: root.code == "" ? "…" : root.code;
-                color: #ffdb4d;
-                font-family: T.display-font;
-                font-size: 44px;
-                font-weight: 700;
-                letter-spacing: 4px;
-                horizontal-alignment: center;
-            }
-            Text {
-                text: root.hint;
-                color: #ffffff99;
-                font-size: 16px;
-                wrap: word-wrap;
-                horizontal-alignment: center;
+            // Под формой бежит пятно волны, и жёлтый код на нём терялся (#192): код и подсказка — на тёмной плашке.
+            Rectangle {
+                background: #000000b3;
+                border-radius: 20px;
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+                    Text {
+                        text: root.code == "" ? "…" : root.code;
+                        color: #ffdb4d;
+                        font-family: T.display-font;
+                        font-size: 44px;
+                        font-weight: 700;
+                        letter-spacing: 4px;
+                        horizontal-alignment: center;
+                    }
+                    Text {
+                        text: root.hint;
+                        color: #ffffffcc;
+                        font-size: 16px;
+                        wrap: word-wrap;
+                        horizontal-alignment: center;
+                    }
+                }
             }
             Rectangle {
                 height: 56px;
@@ -727,6 +736,10 @@ export component App inherits EdgeSwipeGuard {
         height: root.height;
     }
     AboutSheet {
+        width: root.width;
+        height: root.height;
+    }
+    SortSheet {
         width: root.width;
         height: root.height;
     }

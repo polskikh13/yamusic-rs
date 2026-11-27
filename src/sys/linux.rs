@@ -59,6 +59,11 @@ pub fn scale(w: &slint::Window) -> f32 {
     w.with_winit_window(|w| w.scale_factor() as f32).unwrap_or(1.0)
 }
 
+/// Общей настройки «строк за щелчок колёсика» нет: шаг остаётся шагом Slint.
+pub fn wheel_px(_horizontal: bool) -> Option<f32> {
+    None
+}
+
 /// Монитор с окном целиком: панели окружения winit не знает. На Wayland монитор
 /// бывает неизвестен — тогда отсчёт от размера окна.
 pub fn work_area(w: &slint::Window) -> (i32, i32, i32, i32) {
@@ -133,6 +138,20 @@ pub fn system_light_theme() -> bool {
         .stderr(Stdio::null())
         .output();
     !matches!(out, Ok(o) if String::from_utf8_lossy(&o.stdout).contains("uint32 1"))
+}
+
+/// Предпочитаемые языки: `LANGUAGE` (список через двоеточие), затем первое непустое из
+/// `LC_ALL`, `LC_MESSAGES`, `LANG` — в таком порядке glibc выбирает язык сообщений.
+pub fn preferred_languages() -> Vec<String> {
+    let mut out = Vec::new();
+    if let Ok(list) = std::env::var("LANGUAGE") {
+        out.extend(list.split(':').filter(|s| !s.is_empty()).map(String::from));
+    }
+    let locale = ["LC_ALL", "LC_MESSAGES", "LANG"].iter().filter_map(|v| std::env::var(v).ok()).find(|v| !v.is_empty());
+    if let Some(v) = locale.filter(|v| v != "C" && v != "POSIX") {
+        out.push(v);
+    }
+    out
 }
 
 fn home() -> PathBuf {

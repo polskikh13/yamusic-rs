@@ -319,6 +319,11 @@ pub(super) fn set_cursor(at: slint::LogicalPosition) {
     CURSOR.set(at);
 }
 
+/// Где курсор, в логических пикселях окна.
+pub(super) fn cursor() -> slint::LogicalPosition {
+    CURSOR.get()
+}
+
 /// Нажата левая кнопка мыши. Если у поля ввода фокус, а клик пришёлся мимо него, фокус
 /// снимается, чтобы клавиши снова работали. Проверка идёт после того, как Slint обработал
 /// нажатие: если кликнули по другому полю, фокус уже там.
@@ -426,7 +431,7 @@ impl Ctx {
     }
 
     /// Esc: закрывается самое верхнее — подменю, меню, подсказка, панель аккаунта, окно,
-    /// настройки звука, «О треке»; под полноэкранным плеером — обложка и настройки волны. Сам
+    /// настройки звука, «О треке»; под полноэкранным плеером — обложка, настройки и меню волны. Сам
     /// полноэкранный плеер закрывает его FocusScope (`ui/fullscreen.slint`): если закрывать
     /// поверх нечего, Esc уходит интерфейсу.
     fn close_top(&self) -> bool {
@@ -444,6 +449,8 @@ impl Ctx {
             app.set_account_open(false);
         } else if app.get_shortcuts_open() {
             app.set_shortcuts_open(false);
+        } else if app.get_about_open() {
+            app.set_about_open(false);
         } else if app.get_overview_open() {
             app.set_overview_open(false);
         } else if app.get_eq_open() {
@@ -457,6 +464,8 @@ impl Ctx {
             app.set_cover_open(false);
         } else if app.get_wave_settings_open() && app.get_page() == Page::Wave {
             app.set_wave_settings_open(false);
+        } else if app.get_wave_menu_open() && app.get_page() == Page::Wave {
+            app.set_wave_menu_open(false);
         } else {
             return false;
         }

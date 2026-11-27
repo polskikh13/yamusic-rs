@@ -161,6 +161,17 @@ fn fetch(api: &Api, uid: &str, key: &str) -> Res<Data> {
                 artist: None,
             }))
         }
+        "new-episodes" => api.new_episodes().map(|(title, tracks)| {
+            Data::List(ListData {
+                kind: ListKind::Tracks,
+                title: if title.is_empty() { "Новые выпуски".into() } else { title },
+                covers: Vec::new(),
+                tracks,
+                playlist: None,
+                album: None,
+                artist: None,
+            })
+        }),
         "artist-tracks" | "familiar" => {
             let info = api.get_raw(&format!("/artists/{arg}/info"))?;
             let a = info.get("artist").and_then(crate::api::parse_artist).ok_or("нет данных об исполнителе")?;

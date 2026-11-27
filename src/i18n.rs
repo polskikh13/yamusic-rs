@@ -29,6 +29,24 @@ pub fn available() -> bool {
     Asar::open().is_some()
 }
 
+/// Язык интерфейса при первом запуске, как у оригинала (`getLang` → `selectLang`): первый из
+/// языков системы (`navigator.languages`, у каждого берётся код без региона), который есть среди
+/// языков бренда «yandex» — ru, en, uz, kk; иначе `defaultLang` — ru. Без словарей (`dicts`)
+/// переводить нечем, остаётся русский.
+pub fn system_lang(preferred: &[String], dicts: bool) -> &'static str {
+    if !dicts {
+        return "ru";
+    }
+    preferred
+        .iter()
+        .filter_map(|tag| {
+            let code = tag.split(['-', '_', '.', '@']).next()?.to_ascii_lowercase();
+            ["ru", "en", "uz", "kk"].into_iter().find(|l| *l == code)
+        })
+        .next()
+        .unwrap_or("ru")
+}
+
 fn load(lang: &str) -> Option<HashMap<String, String>> {
     let mut asar = Asar::open()?;
     let mut ru = None;
@@ -133,4 +151,22 @@ fn unescape_js(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::system_lang;
+
+    #[test]
+    fn system_language_like_original() {
+        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(system_lang(&v(&["en-US", "ru-RU"]), true), "en");
+        assert_eq!(system_lang(&v(&["de-DE", "kk-KZ"]), true), "kk");
+        assert_eq!(system_lang(&v(&["uz-Latn-UZ"]), true), "uz");
+        assert_eq!(system_lang(&v(&["de-DE", "fr-FR"]), true), "ru");
+        assert_eq!(system_lang(&v(&["en_US.UTF-8"]), true), "en");
+        assert_eq!(system_lang(&v(&[]), true), "ru");
+        // Без словарей официального клиента — только русский.
+        assert_eq!(system_lang(&v(&["en-US"]), false), "ru");
+    }
 }

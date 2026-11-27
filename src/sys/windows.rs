@@ -143,6 +143,21 @@ pub fn scale(w: &slint::Window) -> f32 {
     dpi_scale(handle(w))
 }
 
+/// Сколько логических пикселей даёт щелчок колёсика — как у Chromium оригинала
+/// (`WebMouseWheelEventBuilder`): 100/3 px на строку, строк за щелчок — из настройки Windows
+/// (по умолчанию 3, то есть 100 px), по горизонтали — знаков за щелчок (по умолчанию 1).
+/// `None` при настройке «на один экран»: Chromium тогда листает страницами, здесь шаг остаётся
+/// шагом Slint.
+pub fn wheel_px(horizontal: bool) -> Option<f32> {
+    let (action, default) = if horizontal { (SPI_GETWHEELSCROLLCHARS, 1) } else { (SPI_GETWHEELSCROLLLINES, 3) };
+    let mut n: u32 = default;
+    if unsafe { SystemParametersInfoW(action, 0, &mut n as *mut u32 as *mut c_void, 0) } == 0 {
+        n = default;
+    }
+    // WHEEL_PAGESCROLL
+    (n != u32::MAX).then(|| n as f32 * 100.0 / 3.0)
+}
+
 pub fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -330,6 +345,24 @@ pub fn release_memory() {
         HeapCompact(GetProcessHeap(), 0);
     }
     trim_memory();
+}
+
+/// Предпочитаемые языки интерфейса Windows по порядку («en-US», «ru-RU»): из них Chromium
+/// оригинала собирает `navigator.languages`.
+pub fn preferred_languages() -> Vec<String> {
+    use windows_sys::Win32::Globalization::{GetUserPreferredUILanguages, MUI_LANGUAGE_NAME};
+    let (mut count, mut len) = (0u32, 0u32);
+    // SAFETY: сначала спрашиваем длину списка, потом даём буфер ровно такой длины.
+    unsafe {
+        if GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &mut count, null_mut(), &mut len) == 0 || len == 0 {
+            return Vec::new();
+        }
+        let mut buf = vec![0u16; len as usize];
+        if GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &mut count, buf.as_mut_ptr(), &mut len) == 0 {
+            return Vec::new();
+        }
+        buf.split(|c| *c == 0).filter(|s| !s.is_empty()).map(String::from_utf16_lossy).collect()
+    }
 }
 
 /// Светлая ли тема Windows для приложений.

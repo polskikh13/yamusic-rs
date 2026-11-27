@@ -2,6 +2,13 @@
 // Rust пишет сюда данные и подписывается на колбэки.
 
 export enum Page { wave, search, trends, concerts, nonmusic, collection, list, artist, artists, settings, grid, chart, history, landing }
+export enum PlaylistCardAction { play, pin, like, trailer, menu }
+
+export struct PlaylistCardState {
+    pinned: bool,
+    liked: bool,
+    can-like: bool,
+}
 
 // Строка окна «Горячие клавиши»: подпись и клавиши по ячейкам («—» — пусто).
 export struct ShortcutItem {
@@ -17,8 +24,19 @@ export struct TrackItem {
     duration: string,
     cover: image,
     explicit: bool,
+    best: bool,
     available: bool,
     artist-names: [string],
+    // Альбом из нескольких дисков: сколько заголовков «Диск N» выше строки (на столько строк
+    // она ниже) и номер трека внутри диска; 0 — номер по порядку списка.
+    shift: int,
+    num: int,
+}
+
+// Заголовок «Диск N» («Сезон N» у подкаста) в списке альбома: место среди строк и текст.
+export struct DiskRow {
+    slot: int,
+    text: string,
 }
 
 export struct PinItem {
@@ -30,6 +48,7 @@ export struct PinItem {
 
 export struct CardItem {
     title: string,
+    playlist-target: string,
     subtitle: string,
     cover: image,
     round: bool,
@@ -80,6 +99,7 @@ export struct LTab {
 // Карточка блока лендинга; блоку нужны только свои поля.
 export struct LCard {
     title: string,
+    playlist-target: string,
     subtitle: string,
     sub2: string,
     extra: string,
@@ -192,8 +212,18 @@ export global App {
     // так окно рисуется целиком после переноса на другой монитор.
     in property <bool> repaint;
     in property <string> toast;
+    // Тост подписки (BaseNotificationLike): `toast` — начало, дальше название (ссылка на
+    // `toast-target`), середина и ссылка на коллекцию. Пустая `toast-link` — обычный тост.
+    in property <string> toast-title;
+    in property <string> toast-mid;
+    in property <string> toast-link;
+    in property <string> toast-target;
+    callback toast-open(bool);
     in property <image> toast-cover;
     in property <bool> toast-has-cover;
+    // Значок на месте обложки (тосты повтора и перемешивания); приглушён, когда режим выключен.
+    in property <image> toast-icon;
+    in property <bool> toast-icon-unset;
     // Новая версия на GitHub (src/update.rs): пусто — обновлений нет.
     in property <string> update-version;
     // Установщик скачивается.
@@ -219,6 +249,12 @@ export global App {
     in-out property <int> shortcut-row: -1;
     in-out property <int> shortcut-slot;
     callback shortcuts-reset();
+    // Окно «О приложении»; ссылки из него открываются в браузере.
+    in-out property <bool> about-open;
+    // Карточка доната в настройках; крестик прячет её до следующей версии.
+    in property <bool> donate-shown: true;
+    in property <string> repository;
+    callback open-url(string);
     // У поля ввода (`Field`) фокус и где это поле: горячие клавиши в это время не работают,
     // клик мимо поля снимает с него фокус.
     in-out property <bool> text-focused;
@@ -271,8 +307,25 @@ export global App {
     in property <string> track-format;
     in property <[WaveSettingGroup]> wave-settings;
     in-out property <bool> wave-settings-open;
+    // Играет волна «Под занятие»: кнопка настроек остаётся, хотя над пятном челка.
+    in property <bool> wave-tunable;
+    // Меню челки волны (`VibeContextButton`): есть, если волну можно лайкать (`isLikeEnabled`
+    // оригинала); «Поделиться» — если ещё и `isShareEnabled`.
+    in property <bool> wave-menu;
+    in-out property <bool> wave-menu-open;
+    in property <bool> wave-share;
+    in property <bool> wave-pinned;
+    in property <bool> wave-liked;
+    // «pin», «like» или «share».
+    callback wave-menu-action(string);
     in property <[string]> artist-list;
     in property <string> artists-longest;
+    // Фото исполнителя без фона для «Моей волны»: есть ли оно у трека и сама картинка, когда
+    // загрузится (низ уже растворён, как маской оригинала).
+    in property <bool> has-cutout;
+    in property <image> cutout;
+    // Раскладка волны сообщает, с какой доли высоты фото растворять его низ.
+    callback cutout-fade(float);
     // Фаза анимации пятна, секунды; идёт только во время игры на странице волны.
 
 
@@ -305,6 +358,7 @@ export global App {
     in property <image> list-artist-cover;
     in property <color> list-tint: #00000000;
     in property <[TrackItem]> tracks;
+    in property <[DiskRow]> list-disks;
     in property <bool> list-loading;
     in property <int> list-current: -1;
     in-out property <string> list-filter;
@@ -326,6 +380,16 @@ export global App {
     in property <image> blob;
     in property <[color]> vibe-stops: [#000, #000, #000, #000, #000, #000, #000, #000, #000, #000, #000, #000, #000, #000, #000, #000];
     in property <color> vibe-edge: #000;
+    // Живое пятно — шейдер оригинала (src/vibe.rs): кадр и его место на холсте долями стороны.
+    in property <bool> vibe-anim;
+    in property <image> vibe-frame;
+    in property <float> vibe-x;
+    in property <float> vibe-y;
+    in property <float> vibe-w: 1;
+    in property <float> vibe-h: 1;
+    // Страница волны показана; видимая часть холста долями его стороны.
+    callback vibe-mount();
+    callback vibe-crop(float, float, float, float);
 
     // Текущий трек: подробности для плеера.
     in property <string> track-version;
@@ -368,6 +432,9 @@ export global App {
     in property <[string]> menu-playlists;
     // Есть ли трек из меню в плейлисте с тем же номером.
     in property <[bool]> menu-playlist-has;
+    // Подменю «Перейти к исполнителям»: имена и аватарки.
+    in property <[string]> menu-artists;
+    in property <[image]> menu-artist-covers;
     // Меню в теме приложения (кроме волны и плеера на весь экран) и под кнопкой, а не над ней.
     in property <bool> menu-themed;
     in property <bool> menu-below;
@@ -415,6 +482,7 @@ export global App {
     in property <[TrackItem]> ar-popular;
     in property <int> ar-current: -1;
     in property <string> ar-familiar;
+    in property <image> ar-familiar-cover;
     in property <[CardItem]> ar-studio;
     in property <[CardItem]> ar-release;
     in property <[CardItem]> my-artists;
@@ -491,6 +559,21 @@ export global App {
 
     // Окно «О треке».
     in-out property <bool> track-about-open;
+    // Карточка трека справа: клик по названию трека в альбоме (#189).
+    in-out property <bool> track-card-open;
+    in property <string> track-card-title;
+    in property <string> track-card-artists;
+    in property <bool> track-card-liked;
+    in property <string> track-card-album;
+    in property <string> track-card-album-sub;
+    in property <image> track-card-album-cover;
+    in property <[string]> track-card-lyrics;
+    in property <[string]> track-card-lyrics-preview;
+    in property <[TrackItem]> track-card-similar;
+    callback track-card-action(string);
+    callback track-card-menu(length, length);
+    callback track-card-row(int, bool);
+    callback row-open-track(string, int);
     in property <string> track-about-title;
     in property <string> track-about-version;
     in property <bool> track-about-explicit;
@@ -513,6 +596,15 @@ export global App {
     in property <bool> crossfade;
     // Режим работы: «Плавный» — анимации и кэш слоёв, «Лёгкий» — без них.
     in property <bool> motion: true;
+    // Плавная прокрутка (`src/gui/wheel.rs`) отдаёт щелчок колёсика десятками мелких сдвигов
+    // и на это время поднимает `wheel-smooth`; `wheel-notch` — сколько пикселей в щелчке.
+    in property <bool> wheel-smooth;
+    in property <length> wheel-notch: 60px;
+    // Громкость колёсиком: 2% за щелчок. Доля щелчка от плавной прокрутки даёт долю шага,
+    // чтобы за щелчок набралось те же 2%.
+    public pure function wheel-volume(dy: length) -> float {
+        return max(0, min(1, volume + (wheel-smooth ? 0.02 * dy / wheel-notch : (dy > 0 ? 0.02 : -0.02))));
+    }
     // Статус «Слушает» в профиле Discord и что с ним сейчас.
     in property <bool> discord-on;
     in property <string> discord-status;
@@ -561,6 +653,9 @@ export global App {
     callback open-search-tracks();
     callback open-suggest(int);
     callback open-card(string, int);
+    in property <int> playlist-card-revision;
+    pure callback playlist-card-state(string, int) -> PlaylistCardState;
+    callback playlist-card-action(PlaylistCardAction, string, string, length, length);
     callback play-chart(int);
     callback like-chart(int);
     callback play-result(int);

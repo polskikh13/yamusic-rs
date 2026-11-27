@@ -117,8 +117,8 @@ pub enum Cmd {
     Loudness(Loudness),
     LikeTrack(Track, Option<LikeCompleted>),
     Dislike(Option<LikeCompleted>),
-    #[cfg(mobile)]
-    DislikeTrack(Track),
+    /// Дизлайк трека из меню или снять его, если уже стоит; трек не пропускается.
+    DislikeTrack(Track, Option<LikeCompleted>),
     Wave(Source),
     /// Заново начать «Мою волну» с настройками (seeds `setting…`).
     TuneWave(Vec<String>),
@@ -127,8 +127,9 @@ pub enum Cmd {
     Jump(usize),
     Repeat(Repeat),
     Shuffle(bool),
-    /// «Играть следующим» (`next`) или «Добавить в конец очереди».
-    Enqueue { track: Track, next: bool },
+    /// «Играть следующим» (`next`) или «Добавить в конец очереди»: трек или весь альбом и
+    /// плейлист, в своём порядке.
+    Enqueue { tracks: Vec<Track>, next: bool },
     /// Переключатель «Треки 18+».
     AllowExplicit(bool),
     /// Сколько треки перетекают друг в друга; ноль — без кроссфейда.
@@ -160,6 +161,7 @@ pub struct Player {
     tx: Sender<Msg>,
     shared: Arc<Mutex<Shared>>,
     likes: Likes,
+    dislikes: Likes,
     pub eq: Arc<EqParams>,
 }
 
@@ -169,10 +171,15 @@ impl Player {
         let shared = Arc::new(Mutex::new(Shared { volume: 0.6, ..Default::default() }));
         let likes: Likes = Default::default();
         let eq: Arc<EqParams> = Default::default();
-        let p = Player { tx: tx.clone(), shared: shared.clone(), likes: likes.clone(), eq: eq.clone() };
+        let dislikes: Likes = Default::default();
+        let p = Player { tx: tx.clone(), shared: shared.clone(), likes: likes.clone(), dislikes: dislikes.clone(), eq: eq.clone() };
         thread::Builder::new()
             .name("audio".into())
-            .spawn(move || Engine::new(tx, shared, likes, notify, eq).run(rx))
+            .spawn(move || {
+                let mut engine = Engine::new(tx, shared, likes, notify, eq);
+                engine.dislikes = dislikes;
+                engine.run(rx)
+            })
             .expect("audio thread");
         p
     }
@@ -208,6 +215,10 @@ impl Player {
 
     pub fn is_liked(&self, id: &str) -> bool {
         self.likes.lock().unwrap().contains(id)
+    }
+
+    pub fn is_disliked(&self, id: &str) -> bool {
+        self.dislikes.lock().unwrap().contains(id)
     }
 
 }
@@ -364,6 +375,12 @@ const STALL_LIMIT: Duration = Duration::from_secs(3);
 /// Если выход снова сломался быстрее этого, не переоткрываем его, а ставим паузу до Play.
 const BROKEN_AGAIN: Duration = Duration::from_secs(30);
 
+/// Пауза перед повтором входа после сетевой ошибки: 2, 5, 10, 20, 30 с, дальше раз в минуту.
+fn account_retry_delay(attempt: u32) -> Duration {
+    const STEPS: [u64; 5] = [2, 5, 10, 20, 30];
+    Duration::from_secs(STEPS.get(attempt.saturating_sub(1) as usize).copied().unwrap_or(60))
+}
+
 fn load_track(api: &Api, t: &Track) -> Res<Audio> {
     let (url, format) = api.stream_url(&t.id)?;
     let (again, id) = (api.clone(), t.id.clone());
@@ -458,7 +475,7 @@ struct Engine {
     // Запоминаем подтверждённые реакции, чтобы запоздалый список с сервера их не заменил.
     reaction_writes: HashMap<String, ReactionWrite>,
     reaction_seq: u64,
-    dislikes: HashSet<String>,
+    dislikes: Likes,
     notify: Notify,
     eq: Arc<EqParams>,
     audio: Option<(Output, Sink)>,
@@ -485,6 +502,8 @@ struct Engine {
     source: Source,
     list: Option<ListPlay>,
     queue: VecDeque<Track>,
+    /// Сколько треков в начале очереди вернулось туда по «назад»: пропуск в волне их не сбрасывает.
+    returned: usize,
     history: Vec<Track>,
     current: Option<Track>,
     current_buf: Option<Arc<Buf>>,
@@ -514,6 +533,8 @@ struct Engine {
     fetching: bool,
     batch_gen: u64,
     retry_at: Option<Instant>,
+    /// Вход не удался из-за сети: когда повторить и какая это попытка.
+    account_retry: Option<(Instant, u32)>,
     gen: u64,
     loaded: bool,
     paused: bool,
@@ -563,7 +584,7 @@ impl Engine {
             likes,
             reaction_writes: HashMap::new(),
             reaction_seq: 0,
-            dislikes: HashSet::new(),
+            dislikes: Default::default(),
             notify,
             eq,
             audio: None,
@@ -579,6 +600,7 @@ impl Engine {
             source: Source::Wave,
             list: None,
             queue: VecDeque::new(),
+            returned: 0,
             history: Vec::new(),
             current: None,
             current_buf: None,
@@ -598,6 +620,7 @@ impl Engine {
             fetching: false,
             batch_gen: 0,
             retry_at: None,
+            account_retry: None,
             gen: 0,
             loaded: false,
             paused: true,
@@ -1022,6 +1045,7 @@ impl Engine {
     fn clear_queue(&mut self) {
         self.flush_feedback();
         self.queue.clear();
+        self.returned = 0;
         self.prefetch = None;
         self.prefetching = None;
         self.fetching = false;
@@ -1095,6 +1119,17 @@ impl Engine {
                 self.fetch_batch();
             }
         }
+        if let (Some((at, n)), Some(api)) = (self.account_retry, self.api.clone()) {
+            if Instant::now() >= at {
+                // Повтор уже в пути: следующий срок назначит его ответ.
+                self.account_retry = Some((Instant::now() + Duration::from_secs(3600), n));
+                self.sh().status = Status::Connecting;
+                let tx = self.tx.clone();
+                thread::spawn(move || {
+                    let _ = tx.send(Msg::Account(api.account()));
+                });
+            }
+        }
         if self.fading.as_ref().is_some_and(|s| s.empty()) {
             self.fading = None;
         }
@@ -1155,6 +1190,7 @@ impl Engine {
             }
             Msg::Account(res) => match res {
                 Ok(acc) => {
+                    self.account_retry = None;
                     self.uid = acc.uid.clone();
                     {
                         let mut s = self.sh();
@@ -1181,8 +1217,18 @@ impl Engine {
                         });
                     }
                 }
+                // Сеть пропала на входе (таймаут, нет соединения): вход повторяется сам, иначе
+                // клиент остался бы без волны и запросов до перезапуска. Ошибка показывается
+                // один раз, дальше — «подключение». Отказ сервера (токен и т. п.) — как раньше.
+                Err(e) if e.starts_with("сеть") && self.api.is_some() => {
+                    log(format!("account: {e}"));
+                    let n = self.account_retry.map_or(0, |(_, n)| n) + 1;
+                    self.account_retry = Some((Instant::now() + account_retry_delay(n), n));
+                    self.sh().status = if n == 1 { Status::Failed(e) } else { Status::Connecting };
+                }
                 Err(e) => {
                     log(format!("account: {e}"));
+                    self.account_retry = None;
                     self.api = None;
                     self.sh().status = Status::Failed(e);
                 }
@@ -1266,9 +1312,10 @@ impl Engine {
     fn cmd(&mut self, c: Cmd) {
         match c {
             Cmd::Login(token) => {
+                self.account_retry = None;
                 self.reset();
                 self.reaction_writes.clear();
-                self.dislikes.clear();
+                self.dislikes.lock().unwrap().clear();
                 self.sh().disliked = false;
                 self.likes.lock().unwrap().clear();
                 self.likes_changed();
@@ -1285,12 +1332,13 @@ impl Engine {
                 });
             }
             Cmd::Logout => {
+                self.account_retry = None;
                 self.reset();
                 self.api = None;
                 self.uid.clear();
                 self.likes.lock().unwrap().clear();
                 self.reaction_writes.clear();
-                self.dislikes.clear();
+                self.dislikes.lock().unwrap().clear();
                 self.sh().disliked = false;
                 self.likes_changed();
                 let mut s = self.sh();
@@ -1362,12 +1410,14 @@ impl Engine {
             Cmd::LikeTrack(t, saved) => self.toggle_like(t, saved),
             Cmd::Dislike(done) => {
                 let Some(track) = self.current.clone() else { return };
-                let remove = self.dislikes.contains(&track.id);
+                let remove = self.dislikes.lock().unwrap().contains(&track.id);
                 self.write_reaction(&track, Reaction::Dislike, remove, done);
                 if !remove { self.advance(End::Dislike); }
             }
-            #[cfg(mobile)]
-            Cmd::DislikeTrack(track) => self.write_reaction(&track, Reaction::Dislike, false, None),
+            Cmd::DislikeTrack(track, done) => {
+                let remove = self.dislikes.lock().unwrap().contains(&track.id);
+                self.write_reaction(&track, Reaction::Dislike, remove, done);
+            }
             Cmd::Wave(src) => self.start_wave(src, true),
             Cmd::TuneWave(settings) => {
                 self.start_wave(Source::Wave, false);
@@ -1420,15 +1470,17 @@ impl Engine {
                 self.flush_feedback();
             }
             Cmd::Repeat(r) => self.repeat = r,
-            Cmd::Enqueue { track, next } => {
+            Cmd::Enqueue { tracks, next } => {
                 if next {
-                    self.queue.push_front(track);
+                    for t in tracks.into_iter().rev() {
+                        self.queue.push_front(t);
+                    }
                     self.prefetch = None;
                     if self.loaded {
                         self.prefetch_next();
                     }
                 } else {
-                    self.queue.push_back(track);
+                    self.queue.extend(tracks);
                 }
             }
             Cmd::AllowExplicit(allow) => self.set_allow_explicit(allow),
@@ -1468,13 +1520,13 @@ impl Engine {
                 continue;
             }
             match kind {
-                Reaction::Like => { self.dislikes.remove(&id); changed |= likes.insert(id); }
-                Reaction::Dislike => { changed |= likes.remove(&id); self.dislikes.insert(id); }
+                Reaction::Like => { self.dislikes.lock().unwrap().remove(&id); changed |= likes.insert(id); }
+                Reaction::Dislike => { changed |= likes.remove(&id); self.dislikes.lock().unwrap().insert(id); }
             }
         }
         drop(likes);
         if changed { self.likes_changed(); }
-        self.sh().disliked = self.current.as_ref().is_some_and(|t| self.dislikes.contains(&t.id));
+        self.sh().disliked = self.current.as_ref().is_some_and(|t| self.dislikes.lock().unwrap().contains(&t.id));
     }
 
     fn show_reaction(&mut self, id: &str, state: Option<Reaction>) {
@@ -1483,14 +1535,14 @@ impl Engine {
         drop(likes);
         if changed { self.likes_changed(); }
         let disliked = state == Some(Reaction::Dislike);
-        if disliked { self.dislikes.insert(id.to_string()); } else { self.dislikes.remove(id); }
+        if disliked { self.dislikes.lock().unwrap().insert(id.to_string()); } else { self.dislikes.lock().unwrap().remove(id); }
         if self.current.as_ref().is_some_and(|t| t.id == id) { self.sh().disliked = disliked; }
     }
 
     fn write_reaction(&mut self, track: &Track, kind: Reaction, remove: bool, done: Option<LikeCompleted>) {
         let Some(api) = self.api.clone() else { return };
         let old = if self.likes.lock().unwrap().contains(&track.id) { Some(Reaction::Like) }
-            else if self.dislikes.contains(&track.id) { Some(Reaction::Dislike) } else { None };
+            else if self.dislikes.lock().unwrap().contains(&track.id) { Some(Reaction::Dislike) } else { None };
         self.reaction_seq += 1;
         let seq = self.reaction_seq;
         self.reaction_writes.entry(track.id.clone()).or_insert(ReactionWrite {
@@ -1597,6 +1649,7 @@ impl Engine {
         self.merge_reactions(b.liked, Reaction::Like);
         if replace {
             self.queue.clear();
+            self.returned = 0;
             self.prefetch = None;
         }
         // Пакет берётся как есть, как у оригинала: сервер сам решает, что повторить.
@@ -1651,7 +1704,11 @@ impl Engine {
         if self.list.is_some() || self.source.station().is_none() || self.session.is_empty() {
             return;
         }
+        let back: Vec<Track> = self.queue.drain(..self.returned.min(self.queue.len())).collect();
         self.queue.retain(|t| t.batch_id.is_empty());
+        for t in back.into_iter().rev() {
+            self.queue.push_front(t);
+        }
         if let Some((id, _)) = &self.prefetch {
             if !self.queue.iter().any(|t| t.id == *id) {
                 self.prefetch = None;
@@ -1782,6 +1839,7 @@ impl Engine {
         if !crate::api::allow_explicit() {
             self.queue.retain(|t| !t.explicit);
         }
+        self.returned = self.returned.saturating_sub(1);
         match self.queue.pop_front() {
             Some(t) => {
                 self.current = Some(t);
@@ -1817,6 +1875,7 @@ impl Engine {
             self.end_current(Some("skip"), false, "back_skip");
             if let Some(c) = self.current.take() {
                 self.queue.push_front(c);
+                self.returned += 1;
             }
             self.stop_audio();
             self.current = Some(p);
@@ -1843,7 +1902,7 @@ impl Engine {
         {
             let mut s = self.sh();
             s.track_generation = self.gen;
-            s.disliked = self.dislikes.contains(&t.id);
+            s.disliked = self.dislikes.lock().unwrap().contains(&t.id);
             s.track = Some(t.clone());
             s.position = 0.0;
             s.duration = t.duration_ms as f32 / 1000.0;
@@ -2079,6 +2138,57 @@ mod tests {
     use std::io::Cursor;
 
     #[test]
+    fn login_retries_after_network_error() {
+        let mut e = Engine::new(mpsc::channel().0, Default::default(), Default::default(), Arc::new(|| {}), Default::default());
+        e.api = Some(Api::new(""));
+        // Сеть: ошибка показывается один раз, вход повторится через 2 с.
+        e.handle(Msg::Account(Err("сеть: operation timed out".into())));
+        assert!(matches!(e.sh().status, Status::Failed(_)));
+        assert!(e.api.is_some());
+        let (at, n) = e.account_retry.expect("повтор назначен");
+        assert_eq!(n, 1);
+        assert!(at > Instant::now() + Duration::from_millis(1500));
+        // Снова сеть: тоста больше нет, пауза длиннее.
+        e.handle(Msg::Account(Err("сеть: connection refused".into())));
+        assert_eq!(e.sh().status, Status::Connecting);
+        assert_eq!(e.account_retry.map(|(_, n)| n), Some(2));
+        // Отказ сервера — без повторов, как раньше.
+        e.handle(Msg::Account(Err("нет доступа (HTTP 401) — токен не подошёл или истёк.".into())));
+        assert!(e.account_retry.is_none() && e.api.is_none());
+        assert_eq!(account_retry_delay(1), Duration::from_secs(2));
+        assert_eq!(account_retry_delay(5), Duration::from_secs(30));
+        assert_eq!(account_retry_delay(9), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn wave_skip_keeps_tracks_returned_by_back() {
+        let mut e = Engine::new(mpsc::channel().0, Default::default(), Default::default(), Arc::new(|| {}), Default::default());
+        let t = |id: u32| {
+            let mut t = crate::api::parse_track(&serde_json::json!({"id": id, "title": "t"})).unwrap();
+            t.batch_id = "b".into();
+            t
+        };
+        e.session = "s".into();
+        e.queue = VecDeque::from([t(2), t(3), t(9)]);
+        e.returned = 2;
+        e.play_from_queue();
+        e.refresh_wave();
+        assert_eq!(e.queue.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), ["3"]);
+    }
+
+    #[test]
+    fn enqueued_list_keeps_its_order() {
+        let mut e = Engine::new(mpsc::channel().0, Default::default(), Default::default(), Arc::new(|| {}), Default::default());
+        let t = |id: u32| crate::api::parse_track(&serde_json::json!({"id": id, "title": "t"})).unwrap();
+        let ids = |e: &Engine| e.queue.iter().map(|t| t.id.clone()).collect::<Vec<_>>();
+        e.queue.push_back(t(1));
+        e.cmd(Cmd::Enqueue { tracks: vec![t(2), t(3)], next: true });
+        assert_eq!(ids(&e), ["2", "3", "1"]);
+        e.cmd(Cmd::Enqueue { tracks: vec![t(4), t(5)], next: false });
+        assert_eq!(ids(&e), ["2", "3", "1", "4", "5"]);
+    }
+
+    #[test]
     fn closing_while_restored_track_loads_keeps_ynison_position() {
         let mut engine = Engine::new(mpsc::channel().0, Default::default(), Default::default(), Arc::new(|| {}), Default::default());
         let track = crate::api::parse_track(&serde_json::json!({"id": 7, "title": "Track", "durationMs": 120000})).unwrap();
@@ -2093,7 +2203,7 @@ mod tests {
     fn seek_keeps_latest_position_until_audio_acknowledges_it() {
         let (tx, rx) = mpsc::channel();
         let mut e = Engine::new(tx.clone(), Default::default(), Default::default(), Arc::new(|| {}), Default::default());
-        let player = Player { tx, shared: e.shared.clone(), likes: e.likes.clone(), eq: e.eq.clone() };
+        let player = Player { tx, shared: e.shared.clone(), likes: e.likes.clone(), dislikes: e.dislikes.clone(), eq: e.eq.clone() };
         e.loaded = true;
         e.held_pos = Some(10.0);
         e.sh().track = crate::api::parse_track(&serde_json::json!({"id": 1, "title": "seek"}));
@@ -2136,13 +2246,13 @@ mod tests {
         e.cmd(Cmd::Dislike(None));
         e.handle(Msg::ReactionFinished { uid: "account".into(), id: "7".into(), seq: 1, kind: Reaction::Like, remove: false, result: Ok(()) });
         assert!(!e.likes.lock().unwrap().contains("7"));
-        assert!(e.dislikes.contains("7"));
+        assert!(e.dislikes.lock().unwrap().contains("7"));
         e.handle(Msg::Likes("account".into(), Ok(vec!["7".into()])));
         assert!(!e.likes.lock().unwrap().contains("7"));
         e.handle(Msg::ReactionFinished { uid: "account".into(), id: "7".into(), seq: 2, kind: Reaction::Dislike,
             remove: false, result: Err("offline".into()) });
         assert!(e.likes.lock().unwrap().contains("7"));
-        assert!(!e.dislikes.contains("7"));
+        assert!(!e.dislikes.lock().unwrap().contains("7"));
     }
 
     #[test]

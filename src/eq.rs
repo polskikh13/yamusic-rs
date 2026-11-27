@@ -2,6 +2,7 @@
 
 use rodio::source::SeekError;
 use rodio::Source;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -89,12 +90,47 @@ impl Biquad {
     }
 }
 
+/// Предусиление меняется, как у оригинала: каждое применение настроек эквалайзера —
+/// `preamp.gain.linearRampToValueAtTime(e, currentTime + .3)`. Такая рампа Web Audio идёт не от
+/// текущего момента, а от предыдущего события: после паузы в правках громкость почти сразу
+/// оказывается у нового значения, а частые правки (ползунок тянут) догоняет с отставанием 0,3 с.
+struct Ramp {
+    /// Предыдущее событие: кадр и значение. Без кадра — событие было до этого трека, давно.
+    from: (Option<u64>, f32),
+    /// Запланированные события: кадр, к которому значение должно дойти, и само значение.
+    to: VecDeque<(u64, f32)>,
+}
+
+impl Ramp {
+    fn new(value: f32) -> Ramp {
+        Ramp { from: (None, value), to: VecDeque::new() }
+    }
+
+    fn at(&mut self, frame: u64) -> f32 {
+        while let Some(&(t, v)) = self.to.front() {
+            if t > frame {
+                break;
+            }
+            self.from = (Some(t), v);
+            self.to.pop_front();
+        }
+        match (self.from, self.to.front()) {
+            (_, None) => self.from.1,
+            // Предыдущее событие было давно: значение сразу новое.
+            ((None, _), Some(&(_, v1))) => v1,
+            ((Some(t0), v0), Some(&(t1, v1))) => v0 + (v1 - v0) * (frame - t0) as f32 / (t1 - t0) as f32,
+        }
+    }
+}
+
 pub struct Eq<S> {
     inner: S,
     params: Arc<EqParams>,
     version: u64,
     on: bool,
-    preamp: f32,
+    preamp: Ramp,
+    /// Кадров с начала трека: часы для рампы предусиления, перемотка их не двигает.
+    frame: u64,
     bands: Vec<(usize, Biquad)>,
     /// Состояние фильтров: [канал][полоса] = (x1, x2, y1, y2).
     state: Vec<[[f32; 4]; 10]>,
@@ -104,8 +140,10 @@ pub struct Eq<S> {
 
 impl<S: Source<Item = f32>> Eq<S> {
     pub fn new(inner: S, params: Arc<EqParams>) -> Self {
-        let mut eq = Eq { inner, params, version: 0, on: false, preamp: 1.0, bands: Vec::new(), state: Vec::new(), ch: 0, count: 0 };
+        let mut eq = Eq { inner, params, version: 0, on: false, preamp: Ramp::new(1.0), frame: 0, bands: Vec::new(), state: Vec::new(), ch: 0, count: 0 };
         eq.refresh();
+        // Новый трек начинает с уже установленного значения, без рампы.
+        eq.preamp = Ramp::new(f32::from_bits(eq.params.preamp.load(Ordering::Relaxed)));
         eq
     }
 
@@ -116,8 +154,12 @@ impl<S: Source<Item = f32>> Eq<S> {
         }
         self.version = v;
         self.on = self.params.on.load(Ordering::Relaxed);
-        self.preamp = f32::from_bits(self.params.preamp.load(Ordering::Relaxed));
         let rate = self.inner.sample_rate().max(8000) as f32;
+        // Оригинал применяет настройки, только пока эквалайзер включён.
+        if self.on {
+            let preamp = f32::from_bits(self.params.preamp.load(Ordering::Relaxed));
+            self.preamp.to.push_back((self.frame + (0.3 * rate) as u64, preamp));
+        }
         self.bands = (0..10)
             .filter_map(|i| {
                 let g = f32::from_bits(self.params.gains[i].load(Ordering::Relaxed));
@@ -144,10 +186,13 @@ impl<S: Source<Item = f32>> Iterator for Eq<S> {
         let channels = self.state.len().max(1);
         let ch = self.ch % channels;
         self.ch = (self.ch + 1) % channels;
+        if ch == 0 {
+            self.frame += 1;
+        }
         if !self.on {
             return Some(x);
         }
-        let mut y = x * self.preamp;
+        let mut y = x * self.preamp.at(self.frame);
         let st = &mut self.state[ch];
         for &(i, f) in &self.bands {
             let s = &mut st[i];
@@ -183,5 +228,49 @@ impl<S: Source<Item = f32>> Source for Eq<S> {
         self.state.fill([[0.0; 4]; 10]);
         self.ch = 0;
         self.inner.try_seek(pos)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Те же правки, что в OfflineAudioContext Chromium с `linearRampToValueAtTime(v, currentTime + .3)`
+    /// (кадр — миллисекунда); ожидаемые значения сняты с него.
+    #[test]
+    fn preamp_ramp_matches_web_audio() {
+        let mut r = Ramp { from: (Some(300), 0.5), to: VecDeque::new() };
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        // Правка через 0,7 с после конца прошлой рампы: сразу 70% пути.
+        r.to.push_back((1300, 1.5));
+        for (t, v) in [(1000, 1.2), (1100, 1.3), (1300, 1.5), (1990, 1.5)] {
+            assert!(close(r.at(t), v), "{t}");
+        }
+        r.to.push_back((2300, 1.0));
+        for (t, v) in [(2000, 1.15), (2150, 1.075), (2300, 1.0)] {
+            assert!(close(r.at(t), v), "{t}");
+        }
+        // Ползунок тянут: правка каждые 20 мс, значение идёт за ними с отставанием 0,3 с.
+        for k in 0..10u64 {
+            r.to.push_back((3300 + 20 * k, 0.5 + 0.05 * k as f32));
+            if k == 0 {
+                assert!(close(r.at(3000), 0.65));
+            }
+        }
+        for (t, v) in [(3100, 0.6), (3200, 0.55), (3300, 0.5), (3400, 0.75), (3500, 0.95)] {
+            assert!(close(r.at(t), v), "{t}");
+        }
+        assert!(r.to.is_empty());
+    }
+
+    #[test]
+    fn new_track_starts_at_current_preamp() {
+        let params = Arc::new(EqParams::default());
+        params.set(true, 0.5, &[0.0; 10]);
+        let src = rodio::source::SineWave::new(440.0).take_duration(Duration::from_millis(50));
+        let mut eq = Eq::new(src, params);
+        assert_eq!(eq.preamp.at(eq.frame), 0.5);
+        assert!(eq.preamp.to.is_empty());
+        let _ = eq.next();
     }
 }

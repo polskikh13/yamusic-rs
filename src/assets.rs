@@ -213,8 +213,8 @@ const FONTS: &[&str] = &[
 ];
 
 pub fn register_fonts(asar: &mut Source) -> bool {
-    use slint::fontique_011::fontique;
-    let mut collection = slint::fontique_011::shared_collection();
+    use slint::fontique_012::fontique;
+    let mut collection = slint::fontique_012::shared_collection();
     let mut ok = false;
     for name in FONTS {
         let Some(sfnt) = asar.read(&format!("app/fonts/{name}.woff")).and_then(|w| woff_to_sfnt(&w)) else {

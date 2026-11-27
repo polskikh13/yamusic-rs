@@ -3,9 +3,9 @@
 import { Theme } from "theme.slint";
 import { Icons, Icon, Cover, Shimmer, NavArrows, Field, ArtistLinks, ScrollBar } from "widgets.slint";
 import { T, App, TrackItem } from "state.slint";
-import { TrackRow, AlbumTrackRow } from "rows.slint";
+import { TrackRow, AlbumTrackRow, Tab } from "rows.slint";
 
-component HeaderButton inherits Rectangle {
+export component HeaderButton inherits Rectangle {
     in property <image> icon;
     in property <string> text;
     in property <bool> primary;
@@ -44,6 +44,10 @@ component ListContent inherits TouchArea {
     property <bool> playlist: App.list-kind == "playlist";
     // Все популярные треки исполнителя: шапка как у «Мне нравится», без описания.
     property <bool> artist: App.list-kind == "artist";
+    // «Мои дизлайки» и «Новые выпуски» у оригинала без обложки и кнопок: только заголовок,
+    // у дизлайков ещё вкладки «Треки» / «Исполнители».
+    property <bool> dislikes: App.list-kind == "dislikes";
+    property <bool> plain: dislikes || App.list-kind == "plain";
     property <bool> short-head: likes || artist;
     property <length> pad: 25px;
     property <length> text-x: pad + 204px + 28px;
@@ -59,17 +63,22 @@ component ListContent inherits TouchArea {
     property <length> edit-shift: App.list-edit == 1 ? 8px : 0px;
     property <length> buttons-y: album ? 219px : short-head ? 214px : App.list-edit == 2 ? 426px : 242px + desc-extra + edit-shift;
     property <length> search-y: buttons-y + (short-head ? 90px : 79px);
-    property <length> rows-y: album ? buttons-y + 94px : search-y + 57px;
+    property <length> rows-y: dislikes ? 132px : plain ? 84px : album ? buttons-y + 94px : search-y + 57px;
     property <length> row-x: playlist && App.list-own ? pad + 12px : pad;
     property <length> row-h: 56px;
+    // Заголовки «Диск N» — строки той же высоты между треками.
+    property <int> disk-rows: App.list-disks.length;
     // Flickable передаёт нажатие с задержкой, поэтому строку под курсором определяем по координатам.
+    // Номер строки считая заголовки дисков: у трека это idx + shift.
     property <int> hovered-row: self.has-hover && self.mouse-x >= row-x && self.mouse-x < self.width - 33px
         ? floor((self.mouse-y - flick.content-y - rows-y) / row-h) : -1;
 
     flick := Flickable {
-        content-height: rows-y + App.tracks.length * row-h + (album && App.list-label != "" ? 80px : 32px);
-        property <int> first: max(0, floor((-self.content-y - rows-y) / row-h));
-        property <int> shown-rows: min(App.tracks.length - first, ceil(self.height / row-h) + 2);
+        content-height: rows-y + (App.tracks.length + disk-rows) * row-h + (album && App.list-label != "" ? 80px : 32px);
+        // Заголовки дисков выше первого видимого трека сдвигают его вниз: берём с запасом на их
+        // число и рисуем на столько же строк больше.
+        property <int> first: max(0, floor((-self.content-y - rows-y) / row-h) - disk-rows);
+        property <int> shown-rows: min(App.tracks.length - first, ceil(self.height / row-h) + 2 + disk-rows);
 
         Rectangle {
             y: 0;
@@ -77,7 +86,27 @@ component ListContent inherits TouchArea {
             background: @linear-gradient(180deg, App.list-tint 0%, App.list-tint.with-alpha(0) 100%);
         }
 
+        if plain: Text {
+            x: pad + 2 * 32px + 8px + 16px;
+            y: 12px;
+            text: App.list-title;
+            font-family: "YS Music Headline";
+            font-size: 36px;
+            font-weight: 700;
+            color: Theme.controls-color-primary-text-enabled;
+        }
+        if dislikes: HorizontalLayout {
+            x: pad;
+            y: 72px;
+            height: 36px;
+            spacing: 8px;
+            alignment: start;
+            Tab { text: T.t("Треки") + " • " + App.tracks.length; selected: true; }
+            Tab { text: T.t("Исполнители"); clicked => { App.open-grid("disliked-artists", T.t("Мои дизлайки")); } }
+        }
+
         Cover {
+            visible: !plain;
             x: pad;
             y: 77px;
             width: 204px;
@@ -112,6 +141,7 @@ component ListContent inherits TouchArea {
         }
 
         Text {
+            visible: !plain;
             x: text-x;
             y: 85px;
             text: App.list-kind-label;
@@ -122,7 +152,7 @@ component ListContent inherits TouchArea {
         title := Text {
             x: text-x;
             y: 100px;
-            visible: App.list-edit == 0;
+            visible: App.list-edit == 0 && !plain;
             width: min(self.preferred-width, parent.width - text-x - pad - (playlist && App.list-own ? 56px : 0px));
             height: 57px;
             text: App.list-title;
@@ -304,7 +334,7 @@ component ListContent inherits TouchArea {
             }
             cancel-ta := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { App.list-edit = 0; } }
         }
-        if !album: Text {
+        if !album && !plain: Text {
             x: text-x;
             y: short-head ? 162px : App.list-edit == 2 ? 374px : 190px + desc-extra + edit-shift;
             width: parent.width - text-x - pad;
@@ -315,7 +345,7 @@ component ListContent inherits TouchArea {
             color: Theme.controls-color-primary-text-enabled;
         }
 
-        HorizontalLayout {
+        if !plain: HorizontalLayout {
             x: text-x;
             y: buttons-y;
             height: 40px;
@@ -348,7 +378,7 @@ component ListContent inherits TouchArea {
             up-ta := TouchArea { mouse-cursor: MouseCursor.pointer; }
         }
 
-        if !album: Rectangle {
+        if !album && !plain: Rectangle {
             x: pad;
             y: search-y;
             width: parent.width - pad - 47px;
@@ -405,11 +435,28 @@ component ListContent inherits TouchArea {
             }
         }
 
+        // «Диск N», как `TextVolume_root` оригинала: строка высотой с трек
+        // (`--album-page-track-height`), текст прижат к низу с отступом 16 и сдвинут на 8 слева;
+        // шрифт `CommonAlbumPage_text` — label-m, 500, цвет `primary-text-enabled_variant`.
+        for d in App.list-disks: Text {
+            x: row-x + 8px;
+            y: rows-y + d.slot * row-h + row-h - 16px - Theme.font-line-height-label-m;
+            width: parent.width - row-x - 33px - 8px;
+            height: Theme.font-line-height-label-m;
+            text: d.text;
+            overflow: elide;
+            vertical-alignment: center;
+            font-size: Theme.font-size-label-m;
+            font-weight: 500;
+            color: Theme.controls-color-primary-text-enabled-variant;
+        }
+
         for k in max(0, shown-rows): Rectangle {
             property <int> idx: flick.first + k;
             property <string> track-id: App.tracks[idx].id;
+            property <int> slot: idx + App.tracks[idx].shift;
             x: row-x;
-            y: rows-y + idx * row-h;
+            y: rows-y + slot * row-h;
             width: parent.width - row-x - 33px;
             height: row-h;
             init => { App.request-cover(idx); }
@@ -417,7 +464,7 @@ component ListContent inherits TouchArea {
             changed track-id => { App.request-cover(idx); }
             if !album: TrackRow {
                 width: parent.width;
-                hot: idx == root.hovered-row;
+                hot: parent.slot == root.hovered-row;
                 item: App.tracks[idx];
                 block: "list";
                 index: idx;
@@ -429,10 +476,11 @@ component ListContent inherits TouchArea {
             }
             if album: AlbumTrackRow {
                 width: parent.width;
-                hot: idx == root.hovered-row;
+                hot: parent.slot == root.hovered-row;
                 item: App.tracks[idx];
                 current: idx == App.list-current;
-                pos: idx + 1;
+                // После заголовка «Диск N» счёт снова с 1.
+                pos: App.tracks[idx].num > 0 ? App.tracks[idx].num : idx + 1;
                 block: "list";
                 index: idx;
                 play => { App.play-list(idx); }
@@ -443,7 +491,7 @@ component ListContent inherits TouchArea {
         if album && App.list-label != "": HorizontalLayout {
             x: pad;
             width: self.preferred-width;
-            y: rows-y + App.tracks.length * row-h + 24px;
+            y: rows-y + (App.tracks.length + disk-rows) * row-h + 24px;
             height: 21px;
             spacing: 3px;
             Text { text: T.t("Лейбл:"); font-size: Theme.font-size-label-s; color: Theme.controls-color-primary-text-enabled; vertical-alignment: center; }

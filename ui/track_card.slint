@@ -1,0 +1,183 @@
+// Карточка трека справа, как у оригинала по клику на название трека в альбоме (#189):
+// «Трек», название и исполнители, кнопки, альбом, начало текста и похожие треки.
+
+import { Theme } from "theme.slint";
+import { Icons, Icon, Cover } from "widgets.slint";
+import { T, App } from "state.slint";
+import { TrackRow } from "rows.slint";
+import { HeaderButton } from "list.slint";
+
+component Heading inherits Text {
+    font-family: "YS Music Headline";
+    font-size: Theme.font-size-headline-xs;
+    font-weight: 700;
+    color: Theme.controls-color-primary-text-enabled-variant;
+}
+
+export component TrackCard inherits Rectangle {
+    width: 430px;
+    border-radius: Theme.radius-size-xl;
+    border-width: 1px;
+    border-color: Theme.outline-color-primary-disabled;
+    background: Theme.background-color-primary-enabled-popover;
+    drop-shadow-blur: 20px;
+    drop-shadow-offset-y: 1px;
+    drop-shadow-color: Theme.dark ? #0000007a : #0000003d;
+    clip: true;
+    TouchArea { }
+
+    property <length> pad: Theme.spacer-size-xl;
+    // «Читать полностью» раскрывает весь текст прямо в карточке.
+    property <bool> full-lyrics;
+    changed visible => { self.full-lyrics = false; }
+
+    Flickable {
+        x: 1px;
+        y: 1px;
+        width: root.width - 2px;
+        height: root.height - 2px;
+        content-height: body.preferred-height;
+        body := VerticalLayout {
+            x: pad;
+            width: root.width - 2px - 2 * pad;
+            height: self.preferred-height;
+            padding-top: pad;
+            padding-bottom: pad;
+            spacing: Theme.spacer-size-l;
+            alignment: start;
+
+            VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: T.t("Трек");
+                    font-size: Theme.font-size-label-m;
+                    font-weight: 500;
+                    color: Theme.controls-color-primary-text-enabled;
+                }
+                Text {
+                    width: body.width - 44px;
+                    text: App.track-card-title;
+                    wrap: word-wrap;
+                    font-family: "YS Music Headline";
+                    font-size: 40px;
+                    font-weight: 700;
+                    color: Theme.controls-color-primary-text-enabled-variant;
+                }
+                Text {
+                    text: App.track-card-artists;
+                    overflow: elide;
+                    font-size: Theme.font-size-label-m;
+                    font-weight: 500;
+                    color: Theme.controls-color-primary-text-enabled;
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+                HeaderButton { primary: true; icon: Icons.play-small; text: T.t("Слушать"); clicked => { App.track-card-action("play"); } }
+                HeaderButton { icon: App.track-card-liked ? Icons.liked-small : Icons.like-small; clicked => { App.track-card-action("like"); } }
+                more := HeaderButton {
+                    icon: Icons.more-small;
+                    clicked => { App.track-card-menu(self.absolute-position.x, self.absolute-position.y + self.height + 4px); }
+                }
+            }
+
+            if App.track-card-album != "": VerticalLayout {
+                spacing: Theme.spacer-size-m;
+                Heading { text: T.t("Альбом"); }
+                Rectangle {
+                    height: 56px;
+                    border-radius: Theme.radius-size-m;
+                    background: album-ta.has-hover ? Theme.controls-color-secondary-default-disabled : transparent;
+                    Cover {
+                        x: 0;
+                        width: 56px;
+                        height: 56px;
+                        radius: Theme.radius-size-s;
+                        source: App.track-card-album-cover;
+                    }
+                    Text {
+                        x: 68px;
+                        y: 8px;
+                        width: parent.width - 68px - 28px;
+                        text: App.track-card-album;
+                        overflow: elide;
+                        font-family: "YS Music Headline";
+                        font-size: 18px;
+                        font-weight: 700;
+                        color: Theme.controls-color-primary-text-enabled-variant;
+                    }
+                    Text {
+                        x: 68px;
+                        y: 32px;
+                        text: App.track-card-album-sub;
+                        font-size: Theme.font-size-label-s;
+                        font-weight: 500;
+                        color: Theme.controls-color-primary-text-enabled;
+                    }
+                    Icon {
+                        x: parent.width - 24px;
+                        source: Icons.arrow-right-small;
+                        size: 20px;
+                        colorize: Theme.controls-color-primary-text-enabled;
+                    }
+                    album-ta := TouchArea {
+                        mouse-cursor: MouseCursor.pointer;
+                        clicked => { App.track-card-action("album"); }
+                    }
+                }
+            }
+
+            if App.track-card-lyrics.length > 0: VerticalLayout {
+                spacing: Theme.spacer-size-m;
+                Heading { text: T.t("Текст"); }
+                for line[i] in root.full-lyrics ? App.track-card-lyrics : App.track-card-lyrics-preview: Text {
+                    text: line;
+                    wrap: word-wrap;
+                    font-size: Theme.font-size-label-l;
+                    font-weight: 500;
+                    // Как у оригинала, начало текста гаснет книзу.
+                    color: root.full-lyrics || i < 2 ? Theme.controls-color-primary-text-enabled-variant : Theme.controls-color-primary-text-enabled;
+                }
+                if !root.full-lyrics && App.track-card-lyrics.length > 4: Text {
+                    text: T.t("Читать полностью");
+                    font-size: Theme.font-size-label-m;
+                    font-weight: 500;
+                    color: read-ta.has-hover ? Theme.controls-color-primary-text-enabled-variant : Theme.controls-color-primary-text-enabled;
+                    read-ta := TouchArea {
+                        mouse-cursor: MouseCursor.pointer;
+                        clicked => { root.full-lyrics = true; }
+                    }
+                }
+            }
+
+            if App.track-card-similar.length > 0: VerticalLayout {
+                spacing: Theme.spacer-size-m;
+                Heading { text: T.t("Похожие треки"); }
+                for item[i] in App.track-card-similar: TrackRow {
+                    height: 56px;
+                    item: item;
+                    block: "track-card";
+                    index: i;
+                    play => { App.track-card-row(i, false); }
+                    like => { App.track-card-row(i, true); }
+                }
+            }
+        }
+    }
+
+    close := Rectangle {
+        x: parent.width - self.width - pad;
+        y: pad;
+        width: 32px;
+        height: 32px;
+        border-radius: 16px;
+        background: close-ta.has-hover ? Theme.controls-color-secondary-default-hovered : Theme.controls-color-secondary-default-enabled;
+        Icon { source: Icons.close-small; size: 20px; colorize: Theme.controls-color-primary-text-enabled-variant; }
+        close-ta := TouchArea {
+            mouse-cursor: MouseCursor.pointer;
+            clicked => { App.track-card-open = false; }
+        }
+    }
+}

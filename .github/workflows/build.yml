@@ -176,6 +176,10 @@ jobs:
         with:
           workspaces: android -> target
 
+      # Версия — как NDK_VERSION в tools/apk.sh.
+      - name: NDK r30
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;30.0.16248370" > /dev/null
+
       - name: APK
         env:
           ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
@@ -229,8 +233,36 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # В «What's Changed» GitHub кладёт только PR: свои коммиты дописываем туда же.
+      - name: Заметки релиза
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          prev=$(gh release view --json tagName --jq .tagName)
+          gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$GITHUB_REF_NAME" -f previous_tag_name="$prev" --jq .body > notes.md
+          # Свои коммиты, без PR: заголовок «… (#N)» ставит squash-слияние PR, «X.Y.Z» — коммит версии.
+          gh api "repos/$GH_REPO/compare/$prev...$GITHUB_REF_NAME" --paginate --jq '.commits[]
+            | (.commit.message | split("\n")[0]) as $t
+            | select(($t | test("\\(#[0-9]+\\)")) or ($t | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) | not)
+            | "* \($t) by @\(.author.login // .commit.author.name) in \(.html_url)"' > own.md
+          python3 - <<'EOF'
+          notes = open('notes.md', encoding='utf8').read()
+          own = open('own.md', encoding='utf8').read().strip()
+          head = "## What's Changed\n"
+          if own:
+              if head in notes:
+                  i = notes.index(head) + len(head)
+                  j = notes.find('\n\n', i)
+                  j = len(notes) if j < 0 else j
+                  notes = notes[:j] + '\n' + own + notes[j:]
+              else:
+                  notes = head + own + '\n\n' + notes
+          open('notes.md', 'w', encoding='utf8').write(notes)
+          EOF
+
       - name: Релиз
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "Яндекс Музыка RS ${GITHUB_REF_NAME#v}" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "Яндекс Музыка RS ${GITHUB_REF_NAME#v}" --notes-file notes.md

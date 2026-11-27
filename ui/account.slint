@@ -314,6 +314,7 @@ component ModeOption inherits Rectangle {
 // Карточка доната: градиент Плюса и белая кнопка, ведёт на CloudTips.
 component DonateCard inherits Rectangle {
     callback clicked;
+    callback close;
     height: 88px;
     border-radius: 16px;
     background: ta.has-hover ? Theme.controls-color-plus-default-hovered : Theme.controls-color-plus-default-enabled;
@@ -345,7 +346,7 @@ component DonateCard inherits Rectangle {
         color: #ffffffcc;
     }
     button := Rectangle {
-        x: parent.width - self.width - 20px;
+        x: parent.width - self.width - 44px;
         y: (parent.height - self.height) / 2;
         width: label.preferred-width + 32px;
         height: 36px;
@@ -363,6 +364,20 @@ component DonateCard inherits Rectangle {
     ta := TouchArea {
         mouse-cursor: MouseCursor.pointer;
         clicked => { root.clicked(); }
+    }
+    // Крестик прячет карточку до следующей версии RS.
+    Rectangle {
+        x: parent.width - self.width - 6px;
+        y: 6px;
+        width: 24px;
+        height: 24px;
+        border-radius: 12px;
+        background: close-ta.has-hover ? #ffffff33 : transparent;
+        Icon { source: Icons.close-small; size: 16px; colorize: #ffffffcc; }
+        close-ta := TouchArea {
+            mouse-cursor: MouseCursor.pointer;
+            clicked => { root.close(); }
+        }
     }
 }
 
@@ -392,6 +407,10 @@ export component SettingsPage inherits Rectangle {
             width: 482px;
             spacing: 36px;
             alignment: start;
+            if App.donate-shown: DonateCard {
+                clicked => { App.setting("donate"); }
+                close => { App.setting("donate-hide"); }
+            }
             SettingItem { title: T.t("Очистить память"); clicked => { App.setting("clear"); } }
             SettingItem { title: T.t("Горячие клавиши"); clicked => { App.shortcuts-open = true; } }
             SettingItem {
@@ -424,7 +443,7 @@ export component SettingsPage inherits Rectangle {
             }
             SettingItem {
                 title: T.t("Движение волны");
-                desc: T.t("Пятно «Моей волны» плавно вращается и дышит. Нагружает процессор");
+                desc: T.t("Пятно «Моей волны» откликается на музыку. Нагружает процессор");
                 toggle: true;
                 on: App.wave-motion;
                 clicked => { App.setting("wave-motion"); }
@@ -467,12 +486,24 @@ export component SettingsPage inherits Rectangle {
                 on: App.less-ai;
                 clicked => { App.setting("less-ai"); }
             }
-            SettingItem {
-                title: T.t("Статус в Discord");
-                desc: App.discord-on && App.discord-status != "" ? App.discord-status : T.t("Показывать в профиле Discord, что вы слушаете");
-                toggle: true;
-                on: App.discord-on;
-                clicked => { App.setting("discord"); }
+            VerticalLayout {
+                spacing: 8px;
+                SettingItem {
+                    title: T.t("Статус в Discord");
+                    desc: App.discord-on && App.discord-status != "" ? App.discord-status : T.t("Показывать в профиле Discord, что вы слушаете");
+                    toggle: true;
+                    on: App.discord-on;
+                    clicked => { App.setting("discord"); }
+                }
+                // Частая причина «у меня видно, у друзей нет» — выключенная настройка Discord,
+                // а не приложение: подсказываем, где её включить.
+                if App.discord-on: Text {
+                    text: T.t("Если статус не видят другие, включите «Делиться активностью» в настройках Discord");
+                    wrap: word-wrap;
+                    font-size: 12px;
+                    font-weight: 500;
+                    color: Theme.controls-color-primary-text-enabled;
+                }
             }
             SettingItem {
                 title: App.linux ? T.t("Запускать вместе с системой") : T.t("Запускать вместе с Windows");
@@ -505,13 +536,10 @@ export component SettingsPage inherits Rectangle {
                 desc: App.login;
                 clicked => { App.setting("logout"); }
             }
-            DonateCard {
-                clicked => { App.setting("donate"); }
-            }
             SettingItem {
                 title: T.t("О приложении");
                 desc: App.app-name + " · " + T.t("Версия ") + App.version;
-                clicked => { App.setting("about"); }
+                clicked => { App.about-open = true; }
             }
         }
     }

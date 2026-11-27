@@ -4,6 +4,7 @@ import { Theme } from "theme.slint";
 import { Icons, Icon, Cover, Shimmer, NavArrows, ScrollBar } from "widgets.slint";
 import { T, App, Page, CardItem, TopArtistItem } from "state.slint";
 import { TrackRow, BlockHeader, Tab } from "rows.slint";
+import { CardTile } from "shelf.slint";
 
 component EntityCard inherits Rectangle {
     in property <image> cover;
@@ -234,12 +235,11 @@ component CollectionContent inherits TouchArea {
                         clicked => { App.create-playlist(); }
                     }
                 }
-                for i in min(App.playlists.length, max(0, root.card-count - shift)): EntityCard {
+                for i in min(App.playlists.length, max(0, root.card-count - shift)): CardTile {
                     x: (i + parent.shift) * 202px;
                     y: 89px;
-                    width: 186px;
-                    cover: App.playlists[i].cover;
-                    title: App.playlists[i].title;
+                    size: 186px;
+                    item: App.playlists[i];
                     clicked => { App.open-playlist(i); }
                 }
             }

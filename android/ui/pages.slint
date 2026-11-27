@@ -51,6 +51,8 @@ export struct PPage {
     // Вместо названия поле поиска.
     search: bool,
     has-search: bool,
+    // Кнопка «Сортировка» в шапке («Мои плейлисты»).
+    has-sort: bool,
     // Корень вкладки: без стрелки назад.
     root: bool,
     loading: bool,
@@ -88,6 +90,11 @@ export global Pages {
     in property <PRow> menu-track;
     in property <string> menu-duration;
     in property <bool> menu-liked;
+    in property <bool> menu-disliked;
+    // Шторка «Сортировка»: 0 — по дате добавления, 1 — недавно обновлённые, 2 — по алфавиту.
+    in-out property <bool> sort-open;
+    in-out property <int> sort;
+    callback sort-picked(int);
     callback menu(int, int);
     // 0 волна по треку, 1 лайк, 2 следующим, 3 в очередь, 4 поделиться, 6 альбом, 7 исполнитель, 8 дизлайк, 10 о треке.
     callback menu-action(int);
@@ -1691,6 +1698,21 @@ export component PageView inherits Rectangle {
         }
         TouchArea {
             clicked => { Prof.screen = 1; }
+        }
+    }
+    if root.page.has-sort && !root.page.search: Rectangle {
+        x: root.width - (root.page.has-search ? 104px : 56px);
+        y: root.bar-y + 4px;
+        width: 48px;
+        height: 48px;
+        Image {
+            width: 24px;
+            height: 24px;
+            source: root.icons.sort;
+            colorize: root.solid ? T.fg : #fff;
+        }
+        TouchArea {
+            clicked => { Pages.sort-open = true; }
         }
     }
     if root.page.has-search && !root.page.search: Rectangle {

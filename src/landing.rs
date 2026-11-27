@@ -530,6 +530,17 @@ pub fn web_target(link: &str) -> String {
             return format!("artist:{id}");
         }
     }
+    // Полка и подкатегории подкастов: в оригинале это `/collection/shelf…` и
+    // `/non-music/category/[id]/albums`, на сайте таких адресов нет.
+    match link.split(['?', '#']).next().unwrap_or("").trim_end_matches('/') {
+        "/non-music/bookshelf" => return "shelf".into(),
+        "/non-music/bookshelf/new-episodes" => return "new-episodes".into(),
+        path => {
+            if let Some(id) = path.strip_prefix("/non-music/category/").and_then(|r| r.strip_suffix("/albums")).filter(|id| !id.is_empty() && !id.contains('/')) {
+                return format!("nm-category:{id}");
+            }
+        }
+    }
     if link.starts_with("/webview") {
         return format!("url:{}", webview_url(link));
     }
@@ -596,6 +607,9 @@ mod tests {
         assert_eq!(webview_url("/promo"), "https://music.yandex.ru/promo");
         assert_eq!(webview_url(".evil.com/"), ".evil.com/");
         assert_eq!(webview_url("https://music.yandex.ru/x"), "https://music.yandex.ru/x");
+        assert_eq!(web_target("/non-music/bookshelf"), "shelf");
+        assert_eq!(web_target("/non-music/bookshelf/new-episodes"), "new-episodes");
+        assert_eq!(web_target("/non-music/category/comedy_funny_talks/albums"), "nm-category:comedy_funny_talks");
         assert_eq!(web_target("/tag/autumn"), "tag:autumn");
         assert_eq!(web_target("/landing/music_genres"), "landing:music_genres");
         assert_eq!(web_target("/landing/"), "url:https://music.yandex.ru/landing/");

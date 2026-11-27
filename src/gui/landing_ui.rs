@@ -315,6 +315,7 @@ impl Ctx {
                 let (month, day, weekday) = c.date.clone().unwrap_or_default();
                 LCard {
                     title: c.title.clone().into(),
+                    playlist_target: playlist_cards::card_target(&c.target),
                     subtitle: c.subtitle.clone().into(),
                     sub2: c.sub2.clone().into(),
                     extra: c.extra.clone().into(),
@@ -524,8 +525,13 @@ impl Ctx {
     }
 
     /// «Слушать» на карточке: альбом или плейлист целиком с первого трека.
-    fn play_target(self: &Rc<Self>, target: &str, title: &str) {
-        let Some(net) = self.st.borrow().net.clone() else { return };
+    pub(super) fn play_target(self: &Rc<Self>, target: &str, title: &str) {
+        let (net, request) = {
+            let mut st = self.st.borrow_mut();
+            let Some(net) = st.net.clone() else { return };
+            st.play_target_request = st.play_target_request.wrapping_add(1);
+            (net, st.play_target_request)
+        };
         let (target, title) = (target.to_string(), title.to_string());
         std::thread::spawn(move || {
             let res = match target.split(':').collect::<Vec<_>>().as_slice() {
@@ -534,9 +540,14 @@ impl Ctx {
                 _ => return,
             };
             let _ = slint::invoke_from_event_loop(move || {
-                with_ctx(|c| match res {
-                    Ok((tracks, kind, id)) => c.play_tracks(tracks, 0, kind, &id, &title),
-                    Err(e) => c.toast(format!("Не удалось включить: {e}")),
+                with_ctx(|c| {
+                    if c.st.borrow().play_target_request != request {
+                        return;
+                    }
+                    match res {
+                        Ok((tracks, kind, id)) => c.play_tracks(tracks, 0, kind, &id, &title),
+                        Err(e) => c.toast(format!("Не удалось включить: {e}")),
+                    }
                 })
             });
         });
@@ -596,7 +607,7 @@ impl Ctx {
             return self.open_target(t, &def.title);
         }
         // «Смотреть всё» с лендинга жанров ведёт на лендинг жанра или подборку (`viewAllAction.weblink`).
-        if let Some(t) = def.more_target.as_deref().filter(|t| t.starts_with("landing:") || t.starts_with("tag:")) {
+        if let Some(t) = def.more_target.as_deref().filter(|t| ["landing:", "tag:", "nm-category:"].iter().any(|p| t.starts_with(p))) {
             return self.open_target(t, &def.title);
         }
         // Новые релизы — как у оригинала: «Смотреть всё» берёт их из `entities` блока (до 100, с обложками

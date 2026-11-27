@@ -20,6 +20,8 @@ if (-not $sdk) { throw 'ANDROID_HOME не задан' }
 # Slint собирает свой Java-помощник и ищет android.jar по этой переменной.
 $env:ANDROID_HOME = $sdk
 $ndk = Get-ChildItem "$sdk\ndk" -Directory | Sort-Object { [version]$_.Name } | Select-Object -Last 1 -ExpandProperty FullName
+# Skia из Slint 1.19 собрана под libc++ из NDK r30: со старым libc++_shared.so APK падает при запуске.
+if ([version](Split-Path $ndk -Leaf) -lt [version]'30.0') { throw "Нужен NDK r30 или новее, а есть $ndk" }
 $bt = Get-ChildItem "$sdk\build-tools" -Directory | Sort-Object { [version]$_.Name } | Select-Object -Last 1 -ExpandProperty FullName
 $platform = Get-ChildItem "$sdk\platforms" -Directory | Sort-Object { [int]($_.Name -replace 'android-', '') } | Select-Object -Last 1 -ExpandProperty FullName
 if (-not $env:JAVA_HOME) { $env:JAVA_HOME = 'E:\Android\android-studio\jbr' }

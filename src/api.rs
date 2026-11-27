@@ -30,6 +30,11 @@ pub fn pic(uri: &str, size: u32) -> String {
     // get-music-misc отдаёт только эти размеры, на остальные — 404.
     let size = if uri.contains("/get-music-misc/") {
         [30, 40, 50, 75, 80, 100, 150, 160, 200, 300, 400, 460, 600, 700, 800, 1000].into_iter().find(|&s| s >= size).unwrap_or(1000)
+    } else if uri.contains("/get-music-feed-promotion/") {
+        // У промо-картинок («Актуальное» в «Книгах и подкастах») нет 600x600 — 404, карточки
+        // оставались пустыми. Оригинал просит их в 400 и 800 для экрана с масштабом
+        // (`PromotionsCard`: size 400, srcset 2x).
+        if size <= 400 { 400 } else { 800 }
     } else {
         [50, 100, 200, 300, 400, 600, 1000].into_iter().find(|&s| s >= size).unwrap_or(1000)
     };
@@ -41,9 +46,14 @@ pub struct Named {
     pub id: String,
     pub name: String,
     pub cover: Option<String>,
-    /// Фото без фона: телефон ставит его над названием трека в «Моей волне».
-    #[cfg_attr(not(mobile), allow(dead_code))]
+    /// Фото без фона: его ставят над названием трека в «Моей волне».
     pub cutout: Option<String>,
+    /// «Сборник» вместо исполнителя.
+    #[cfg_attr(mobile, allow(dead_code))]
+    pub various: bool,
+    /// Составной исполнитель («A & B») по частям: меню трека открывает их по отдельности.
+    #[cfg_attr(mobile, allow(dead_code))]
+    pub decomposed: Vec<Named>,
 }
 
 #[derive(Clone, Debug)]
@@ -66,8 +76,13 @@ pub struct Track {
     pub artist_list: Vec<Named>,
     pub duration_ms: u64,
     pub cover: Option<String>,
+    /// Фото без фона, выпущенное к самому релизу (`cutoutCover` трека); есть не у всех.
+    #[cfg_attr(mobile, allow(dead_code))]
+    pub cutout: Option<String>,
     pub explicit: bool,
     pub lyrics: bool,
+    /// Популярный трек альбома (`bests`): у оригинала молния в строке.
+    pub best: bool,
     pub color: Option<[u8; 3]>,
     /// Для тегов скачанного файла: альбом, год, номер трека.
     pub album_title: String,
@@ -80,6 +95,8 @@ pub struct Track {
     pub mood: Option<Mood>,
     /// `type` трека: music, podcast-episode, audiobook, fairy-tale… Пусто — music.
     pub kind: String,
+    /// Первый трек тома в альбоме из нескольких томов: номер диска для заголовка «Диск N».
+    pub disk: Option<u32>,
 }
 
 /// `trackParameters` из ответа API.
@@ -117,6 +134,17 @@ impl Track {
 
     pub fn cover_url(&self, size: u32) -> Option<String> {
         self.cover.as_deref().map(|c| pic(c, size))
+    }
+
+    /// Фото над названием в «Моей волне», как у `VibePage` оригинала: только при главном
+    /// исполнителе (первом), сначала фото релиза, иначе фото этого исполнителя. Размер `orig`,
+    /// как у оригинала (`size: "orig"`): это кадр 5:4 с прозрачными краями, а квадратный
+    /// размер сервер обрезает по бокам.
+    #[cfg_attr(mobile, allow(dead_code))]
+    pub fn cutout_url(&self) -> Option<String> {
+        let main = self.artist_list.first()?;
+        let uri = self.cutout.as_deref().or(main.cutout.as_deref())?;
+        Some(format!("https://{}", uri.trim_start_matches("https://").replace("%%", "orig")))
     }
 }
 
@@ -374,21 +402,23 @@ pub(crate) fn hex_color(v: Option<&Value>) -> Option<[u8; 3]> {
 }
 
 fn artists_of(v: &Value) -> Vec<Named> {
-    v.get("artists")
-        .and_then(|a| a.as_array())
-        .map(|a| {
-            a.iter()
-                .filter_map(|x| {
-                    Some(Named {
-                        id: s(x.get("id")).unwrap_or_default(),
-                        name: x.get("name")?.as_str()?.to_string(),
-                        cover: x.pointer("/cover/uri").and_then(|u| u.as_str()).map(String::from),
-                        cutout: x.pointer("/cutoutCover/uri").and_then(|u| u.as_str()).map(String::from),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    v.get("artists").and_then(|a| a.as_array()).map(|a| a.iter().filter_map(named).collect()).unwrap_or_default()
+}
+
+fn named(x: &Value) -> Option<Named> {
+    // `decomposed` приходит парами «разделитель, исполнитель»: `[" & ", {…}, ", ", {…}]`;
+    // как у оригинала (модуль 53399), берётся исполнитель, перед которым стоит строка.
+    let decomposed = x.get("decomposed").and_then(|d| d.as_array()).map(|d| {
+        d.windows(2).filter(|w| w[0].is_string()).filter_map(|w| named(&w[1])).collect()
+    });
+    Some(Named {
+        id: s(x.get("id")).unwrap_or_default(),
+        name: x.get("name")?.as_str()?.to_string(),
+        cover: x.pointer("/cover/uri").and_then(|u| u.as_str()).map(String::from),
+        cutout: x.pointer("/cutoutCover/uri").and_then(|u| u.as_str()).map(String::from),
+        various: x.get("various").and_then(|v| v.as_bool()).unwrap_or(false),
+        decomposed: decomposed.unwrap_or_default(),
+    })
 }
 
 fn join_names(a: &[Named]) -> String {
@@ -454,9 +484,11 @@ pub(crate) fn parse_track(v: &Value) -> Option<Track> {
         artist_list,
         duration_ms: v.get("durationMs").and_then(|d| d.as_u64()).unwrap_or(0),
         cover: v.get("coverUri").and_then(|c| c.as_str()).map(String::from),
+        cutout: v.pointer("/cutoutCover/uri").and_then(|c| c.as_str()).map(String::from),
         explicit: v.get("contentWarning").and_then(|c| c.as_str()) == Some("explicit")
             || v.get("explicit").and_then(|c| c.as_bool()).unwrap_or(false),
         lyrics: flag("hasAvailableSyncLyrics") || flag("hasAvailableTextLyrics"),
+        best: album.and_then(|a| a.get("bests")).and_then(Value::as_array).is_some_and(|b| b.iter().any(|x| s(Some(x)) == s(v.get("id")))),
         color: hex_color(v.pointer("/derivedColors/average")),
         album_title: album.map(|a| str_of(a, "title")).unwrap_or_default(),
         year: album.and_then(|a| a.get("year")).and_then(|y| y.as_u64()).map(|y| y as u32),
@@ -464,7 +496,31 @@ pub(crate) fn parse_track(v: &Value) -> Option<Track> {
         batch_id: String::new(),
         mood: mood_of(v),
         kind: str_of(v, "type"),
+        disk: None,
     })
+}
+
+/// Треки всех томов альбома одним списком. Как `makeFlatVolumeItems` оригинала: заголовок
+/// «Диск N» стоит перед каждым томом, только если томов больше одного; номер —
+/// `albums[0].trackPosition.volume` первого трека тома.
+fn album_tracks(v: &Value) -> Vec<Track> {
+    let vols: Vec<&Vec<Value>> = v.get("volumes").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_array).collect();
+    let bests: Vec<String> = v.get("bests").and_then(Value::as_array).into_iter().flatten().filter_map(|x| s(Some(x))).collect();
+    let mut tracks: Vec<Track> = Vec::new();
+    for (k, vol) in vols.iter().enumerate() {
+        let start = tracks.len();
+        tracks.extend(vol.iter().filter_map(parse_track).map(|mut t| {
+            t.best |= bests.contains(&t.id);
+            t
+        }));
+        if vols.len() > 1 {
+            if let Some(first) = tracks.get_mut(start) {
+                let number = vol.first().and_then(|t| t.pointer("/albums/0/trackPosition/volume")).and_then(Value::as_u64);
+                first.disk = Some(number.map_or(k as u32 + 1, |n| n as u32));
+            }
+        }
+    }
+    tracks
 }
 
 fn mood_of(v: &Value) -> Option<Mood> {
@@ -1021,6 +1077,34 @@ fn short(s: &str) -> String {
     s.chars().take(200).collect()
 }
 
+/// Ключ волны в Коллекции, как у карты `library.vibes` оригинала: сиды без повторов, по
+/// порядку, через запятую.
+pub fn wave_key(seeds: &[String]) -> String {
+    let mut seeds: Vec<&str> = seeds.iter().map(String::as_str).collect();
+    seeds.sort_unstable();
+    seeds.dedup();
+    seeds.join(",")
+}
+
+/// Ответ `account/experiments/details` → имена экспериментов с группой `on`.
+fn experiments_on(v: &Value) -> std::collections::HashSet<String> {
+    v.as_object()
+        .map(|m| m.iter().filter(|(_, e)| e.get("group").and_then(|g| g.as_str()) == Some("on")).map(|(k, _)| k.clone()).collect())
+        .unwrap_or_default()
+}
+
+/// Ответ `collection/sync` → ключи волн из `likedWaves`.
+fn parse_liked_waves(v: &Value) -> Option<std::collections::HashSet<String>> {
+    let liked = v.pointer("/values/likedWaves/values/liked")?.as_array()?;
+    Some(
+        liked
+            .iter()
+            .filter_map(|w| w.get("seeds")?.as_array())
+            .map(|seeds| wave_key(&seeds.iter().filter_map(|s| s.as_str().map(String::from)).collect::<Vec<_>>()))
+            .collect(),
+    )
+}
+
 impl Api {
     pub fn new(token: &str) -> Self {
         let http = Client::builder()
@@ -1285,6 +1369,37 @@ impl Api {
         }
     }
 
+    /// Включённые серверные эксперименты оригинала (`account/experiments/details`): имена с
+    /// группой `on`, как у `checkExperiment(имя, "on")`.
+    pub fn experiments_on(&self) -> Res<std::collections::HashSet<String>> {
+        let v = self.get_raw("/account/experiments/details")?;
+        Ok(experiments_on(&v))
+    }
+
+    /// Волны в Коллекции (ключи — `wave_key`): `collection/sync` только с `likedWaves`, как
+    /// `library.getData([LIKED_VIBES])` оригинала.
+    pub fn liked_waves(&self) -> Res<std::collections::HashSet<String>> {
+        let v = self.post_raw("/collection/sync", &json!({ "likedWaves": { "allValuesRequired": true } }))?;
+        parse_liked_waves(&v).ok_or_else(|| "в ответе нет likedWaves".into())
+    }
+
+    /// «Нравится» у волны: `collection/v1/waves/like` или `unlike`, сиды — без повторов и по
+    /// порядку, как в `library.toggleVibeLike` оригинала.
+    pub fn like_wave(&self, seeds: &[String], like: bool) -> Res<()> {
+        let path = if like { "/collection/v1/waves/like" } else { "/collection/v1/waves/unlike" };
+        let key = wave_key(seeds);
+        let seeds: Vec<&str> = key.split(',').collect();
+        self.post_raw(path, &json!({ "waves": [{ "seeds": seeds }] })).map(|_| ())
+    }
+
+    /// «Поделиться» волной: `PUT wave/v1/shares` с сидами отдаёт `shareId`, ссылка —
+    /// `/myvibe/<shareId>` на сайте Музыки, как у `ShareVibeMenuItem` оригинала.
+    pub fn share_wave(&self, seeds: &[String]) -> Res<String> {
+        let v = self.send_raw(self.desktop_req(Method::PUT, "/wave/v1/shares").json(&json!({ "seeds": seeds })))?;
+        let id = s(v.get("shareId")).ok_or("в ответе нет shareId")?;
+        Ok(format!("https://music.yandex.ru/myvibe/{id}"))
+    }
+
     /// Лайк альбома или исполнителя: `kind` — albums или artists.
     pub fn like_entity(&self, uid: &str, kind: &str, id: &str, remove: bool) -> Res<()> {
         let action = if remove { "remove" } else { "add-multiple" };
@@ -1300,6 +1415,52 @@ impl Api {
     /// Всё содержимое блока лендинга, как на странице `entities` оригинала: первая страница, 100 карточек.
     pub fn block_entities(&self, id: &str) -> Res<Vec<Card>> {
         Ok(cards(&self.get_raw(&format!("/landing/block/{id}/entities?page=0&pageSize=100"))?))
+    }
+
+    /// Подкатегория подкастов (`/non-music/category/<id>/albums`): название и подкасты.
+    pub fn nonmusic_category(&self, id: &str) -> Res<(String, Vec<Card>)> {
+        let v = self.get_raw(&format!("/non-music/category/{id}/albums"))?;
+        let ids: Vec<String> = v.get("albums").and_then(|a| a.as_array()).into_iter().flatten().filter_map(|x| s(Some(x))).collect();
+        let mut cards = Vec::with_capacity(ids.len());
+        for chunk in ids.chunks(100) {
+            let v = self.get("/albums", &[("album-ids", &chunk.join(","))])?;
+            cards.extend(v.as_array().into_iter().flatten().filter_map(parse_album).map(|a| album_card(&a)));
+        }
+        Ok((str_of(&v, "title"), cards))
+    }
+
+    /// «Моя полка» (`/collection/shelf` оригинала): недавно прослушанное и отложенное.
+    pub fn bookshelf(&self) -> Res<Vec<(String, Vec<Card>)>> {
+        ["recently-played", "liked"]
+            .iter()
+            .map(|part| {
+                let v = self.get_raw(&format!("/non-music/bookshelf/{part}"))?;
+                let cards = v
+                    .get("entities")
+                    .and_then(|e| e.as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|e| parse_album(e.get("album")?))
+                    .map(|a| album_card(&a))
+                    .collect();
+                Ok((str_of(&v, "title"), cards))
+            })
+            .collect()
+    }
+
+    /// «Новые выпуски» с полки: выпуски из блоков `non-music/new-episodes`.
+    pub fn new_episodes(&self) -> Res<(String, Vec<Track>)> {
+        let v = self.get_raw("/non-music/new-episodes")?;
+        let tracks = v
+            .get("blocks")
+            .and_then(|b| b.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|b| b.get("entities")?.as_array())
+            .flatten()
+            .filter_map(|e| parse_track(e.get("track")?))
+            .collect();
+        Ok((str_of(&v, "title"), tracks))
     }
 
     /// Подборка (`/tag/autumn`): название тега и его плейлисты, как TagPage оригинала —
@@ -1336,6 +1497,13 @@ impl Api {
         } else {
             tabs(&v, "playlist", parse_playlist).into_iter().map(|(t, p)| (t, p.iter().map(playlist_card).collect())).collect()
         })
+    }
+
+    /// Вкладки «Мои плейлисты» самими плейлистами: на телефоне их сортируют по дате и названию.
+    #[cfg_attr(not(mobile), allow(dead_code))]
+    pub fn collection_playlists(&self) -> Res<Vec<(String, Vec<Playlist>)>> {
+        let v = self.get_raw("/landing-blocks/collection/playlists-liked-and-playlists-created?count=500")?;
+        Ok(tabs(&v, "playlist", parse_playlist))
     }
 
     /// Все альбомы исполнителя: path — discography-albums (студийные), direct-albums или also-albums (сборники).
@@ -1759,12 +1927,7 @@ impl Api {
     pub fn album(&self, id: &str) -> Res<(Album, Vec<Track>)> {
         let v = self.get(&format!("/albums/{id}/with-tracks"), &[])?;
         let album = parse_album(&v).ok_or("нет данных об альбоме")?;
-        let tracks = v
-            .get("volumes")
-            .and_then(|x| x.as_array())
-            .map(|vols| vols.iter().filter_map(|d| d.as_array()).flatten().filter_map(parse_track).collect())
-            .unwrap_or_default();
-        Ok((album, tracks))
+        Ok((album, album_tracks(&v)))
     }
 
     pub fn playlist(&self, uid: &str, kind: &str) -> Res<(Playlist, Vec<Track>)> {
@@ -2092,6 +2255,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn liked_waves_are_keyed_by_sorted_unique_seeds() {
+        let v = serde_json::json!({ "values": { "likedWaves": { "info": { "revision": 7 }, "values": { "liked": [
+            { "seeds": ["genre:rock"], "timestamp": "2026-11-01T00:00:00Z" },
+            { "seeds": ["mood:calm", "activity:road-trip", "mood:calm"], "timestamp": "2026-11-02T00:00:00Z" },
+            { "timestamp": "2026-11-03T00:00:00Z" }
+        ] } } } });
+        let keys = parse_liked_waves(&v).unwrap();
+        assert_eq!(keys.len(), 2);
+        assert!(keys.contains("genre:rock"));
+        assert!(keys.contains("activity:road-trip,mood:calm"));
+        assert_eq!(wave_key(&["mood:calm".into(), "activity:road-trip".into()]), "activity:road-trip,mood:calm");
+        assert!(parse_liked_waves(&serde_json::json!({ "values": {} })).is_none());
+    }
+
+    #[test]
+    fn experiments_on_are_those_in_group_on() {
+        let v = serde_json::json!({
+            "WebNextWaveLikesAndShares": { "group": "on", "value": { "title": "on" } },
+            "WebNextVibeDescription": { "group": "default", "value": { "title": "default" } },
+            "WebNextOther": { "value": { "title": "on" } }
+        });
+        let on = experiments_on(&v);
+        assert!(on.contains("WebNextWaveLikesAndShares"));
+        assert_eq!(on.len(), 1);
+        assert!(experiments_on(&serde_json::json!([])).is_empty());
+    }
+
+    #[test]
     fn album_label_link_requires_a_numeric_id() {
         let mut data = serde_json::json!({
             "id": 1, "title": "Album", "labels": [{"id": 12, "name": "Label"}]
@@ -2121,8 +2312,23 @@ mod tests {
     }
 
     #[test]
+    fn decomposed_artist() {
+        let t = parse_track(&json!({"id": 1, "title": "A", "artists": [
+            {"id": 3, "name": "A & B", "decomposed": [{"id": 9, "name": "без разделителя"}, " & ", {"id": 4, "name": "B"}, ", "]},
+            {"id": 5, "name": "C"}
+        ]})).unwrap();
+        assert_eq!(t.artists, "A & B, C");
+        let parts: Vec<&str> = t.artist_list[0].decomposed.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(parts, ["B"]);
+        assert!(t.artist_list[1].decomposed.is_empty());
+    }
+
+    #[test]
     fn pic_size() {
         assert_eq!(pic("avatars.yandex.net/a/%%", 200), "https://avatars.yandex.net/a/200x200");
+        let promo = "avatars.yandex.net/get-music-feed-promotion/1/a-landing.image/%%";
+        assert_eq!(pic(promo, 356), "https://avatars.yandex.net/get-music-feed-promotion/1/a-landing.image/400x400");
+        assert_eq!(pic(promo, 445), "https://avatars.yandex.net/get-music-feed-promotion/1/a-landing.image/800x800");
     }
 
     #[test]
@@ -2141,6 +2347,20 @@ mod tests {
     }
 
     #[test]
+    fn album_disks() {
+        let disks = |v: Value| album_tracks(&v).iter().map(|t| t.disk).collect::<Vec<_>>();
+        let t = |id: u32, vol: u32| json!({"id": id, "title": "t", "albums": [{"id": 1, "trackPosition": {"volume": vol, "index": 1}}]});
+        // Один том — без заголовков.
+        assert_eq!(disks(json!({"volumes": [[t(1, 1), t(2, 1)]]})), vec![None, None]);
+        assert_eq!(disks(json!({"volumes": [[t(1, 1), t(2, 1)], [t(3, 2)], [t(4, 3), t(5, 3)]]})), vec![Some(1), None, Some(2), Some(3), None]);
+        // Сезоны подкаста идут с последнего: номер берётся из `trackPosition.volume`.
+        assert_eq!(disks(json!({"volumes": [[t(1, 3)], [t(2, 2), t(3, 2)], [t(4, 1)]]})), vec![Some(3), Some(2), None, Some(1)]);
+        // Без `trackPosition` — номер тома по порядку; пустой том заголовка не получает.
+        let bare = |id: u32| json!({"id": id, "title": "t"});
+        assert_eq!(disks(json!({"volumes": [[bare(1)], [], [bare(2)]]})), vec![Some(1), Some(3)]);
+    }
+
+    #[test]
     fn track_kind() {
         let t = |kind: &str| parse_track(&json!({"id": 1, "title": "A", "type": kind})).unwrap();
         assert!(t("podcast-episode").is_episode());
@@ -2150,5 +2370,18 @@ mod tests {
         assert!(!t("music").is_episode() && !t("music").is_chapter());
         let plain = parse_track(&json!({"id": 1, "title": "A"})).unwrap();
         assert!(!plain.is_episode() && !plain.is_chapter());
+    }
+
+    #[test]
+    fn cutout_like_vibe_page() {
+        let artist = json!({"id": 2, "name": "B", "cutoutCover": {"uri": "avatars.yandex.net/artist/%%"}});
+        // Сначала фото релиза, иначе фото главного исполнителя; размер orig.
+        let release = parse_track(&json!({"id": 1, "title": "A", "artists": [artist], "cutoutCover": {"uri": "avatars.yandex.net/release/%%"}})).unwrap();
+        assert_eq!(release.cutout_url().as_deref(), Some("https://avatars.yandex.net/release/orig"));
+        let own = parse_track(&json!({"id": 1, "title": "A", "artists": [artist]})).unwrap();
+        assert_eq!(own.cutout_url().as_deref(), Some("https://avatars.yandex.net/artist/orig"));
+        // Без главного исполнителя фото нет.
+        let none = parse_track(&json!({"id": 1, "title": "A", "cutoutCover": {"uri": "avatars.yandex.net/release/%%"}})).unwrap();
+        assert_eq!(none.cutout_url(), None);
     }
 }

@@ -1,9 +1,60 @@
 // Карточки и горизонтальные полки с прокруткой стрелками.
 
 import { Theme } from "theme.slint";
-import { Icons, Icon, Cover, Pic, ExplicitMark } from "widgets.slint";
-import { App, CardItem } from "state.slint";
+import { Icons, Icon, Cover, Pic, ExplicitMark, CircleButton } from "widgets.slint";
+import { App, CardItem, PlaylistCardAction, PlaylistCardState } from "state.slint";
 import { BlockHeader } from "rows.slint";
+
+export component PlaylistCardActions inherits Rectangle {
+    in property <string> target;
+    in property <string> title;
+    property <PlaylistCardState> state: App.playlist-card-state(target, App.playlist-card-revision);
+    border-radius: Theme.radius-size-l;
+    background: #00000059;
+
+    CircleButton {
+        x: 12px;
+        y: parent.height - self.height - 12px;
+        diameter: 48px;
+        icon: Icons.play-xxs;
+        clicked => { App.playlist-card-action(PlaylistCardAction.play, root.target, root.title, 0px, 0px); }
+    }
+    CircleButton {
+        x: parent.width - self.width - 12px;
+        y: 12px;
+        diameter: 36px;
+        icon-size: 20px;
+        icon: root.state.pinned ? Icons.pin-filled-small : Icons.pin-small;
+        clicked => { App.playlist-card-action(PlaylistCardAction.pin, root.target, root.title, 0px, 0px); }
+    }
+    CircleButton {
+        x: 12px;
+        y: parent.height - self.height - 68px;
+        diameter: 36px;
+        icon-size: 20px;
+        icon: Icons.trailer-small;
+        clicked => { App.playlist-card-action(PlaylistCardAction.trailer, root.target, root.title, 0px, 0px); }
+    }
+    if root.state.can-like: CircleButton {
+        x: parent.width - self.width - 12px;
+        y: parent.height - self.height - 12px;
+        diameter: 36px;
+        icon-size: 20px;
+        icon: root.state.liked ? Icons.liked-small : Icons.like-small;
+        clicked => { App.playlist-card-action(PlaylistCardAction.like, root.target, root.title, 0px, 0px); }
+    }
+    CircleButton {
+        x: parent.width - self.width - (root.state.can-like ? 56px : 12px);
+        y: parent.height - self.height - 12px;
+        diameter: 36px;
+        icon-size: 20px;
+        icon: Icons.more-small;
+        clicked => {
+            App.playlist-card-action(PlaylistCardAction.menu, root.target, root.title,
+                self.absolute-position.x + self.width / 2, self.absolute-position.y + self.height);
+        }
+    }
+}
 
 // Карточка альбома, плейлиста, исполнителя или подборки: обложка, подписи 13/500.
 export component CardTile inherits Rectangle {
@@ -55,7 +106,7 @@ export component CardTile inherits Rectangle {
         round: item.round;
         radius: Theme.radius-size-l;
         source: item.cover;
-        if ta.has-hover: Rectangle {
+        if ta.has-hover && item.playlist-target == "": Rectangle {
             background: #00000033;
             Rectangle {
                 x: item.round ? (parent.width - 48px) / 2 : 12px;
@@ -132,6 +183,12 @@ export component CardTile inherits Rectangle {
     ta := TouchArea {
         mouse-cursor: MouseCursor.pointer;
         clicked => { root.clicked(); }
+        if ta.has-hover && !root.mix && root.item.playlist-target != "": PlaylistCardActions {
+            y: 0px;
+            height: root.size;
+            target: root.item.playlist-target;
+            title: root.item.title;
+        }
     }
 }
 

@@ -6,12 +6,25 @@ import { App, TrackItem, ChartRow } from "state.slint";
 
 // Строка трека: обложка 40, название и исполнитель 14/500, лайк 40 и длительность справа.
 // По краям отступ 8px внутри подсветки, как padding-inline у CommonTrack оригинала.
+/// Молния у популярного трека (`lightning_xxs`, как в TrackListItem оригинала).
+component Best inherits Rectangle {
+    width: 40px;
+    height: 40px;
+    Icon {
+        source: Icons.best;
+        size: 16px;
+        colorize: Theme.controls-color-primary-text-enabled;
+    }
+}
+
 export component TrackRow inherits TouchArea {
     in property <TrackItem> item;
     in property <bool> current;
     // Откуда строка и её номер: по ним Rust находит трек для ссылок на альбом и исполнителя.
     in property <string> block;
     in property <int> index;
+    // Молния популярного трека встаёт перед сердцем и укорачивает название.
+    property <length> text-end: like.x - (item.best ? 40px : 0px);
     // Свой плейлист: при наведении корзина левее лайка.
     in property <bool> removable;
     callback play();
@@ -67,7 +80,7 @@ export component TrackRow inherits TouchArea {
         x: 60px;
         y: 9px;
         height: 16px;
-        width: like.x - self.x - 8px;
+        width: text-end - self.x - 8px;
         spacing: 4px;
         Text {
             text: item.title;
@@ -104,7 +117,7 @@ export component TrackRow inherits TouchArea {
     if item.artist-names.length == 0 || root.block == "": Text {
         x: 60px;
         y: 30px;
-        width: like.x - self.x - 8px;
+        width: text-end - self.x - 8px;
         text: item.artists;
         overflow: elide;
         font-size: Theme.font-size-label-m;
@@ -115,10 +128,11 @@ export component TrackRow inherits TouchArea {
         x: 60px;
         y: 29px;
         height: 18px;
-        width: min(self.content-width, like.x - self.x - 8px);
+        width: min(self.content-width, text-end - self.x - 8px);
         names: item.artist-names;
         clicked(i) => { App.row-open-artist(root.block, root.index, i); }
     }
+    if item.best: Best { x: like.x - 40px; y: 8px; }
     like := Rectangle {
         x: parent.width - 111px;
         y: 8px;
@@ -277,7 +291,7 @@ export component AlbumTrackRow inherits Rectangle {
     callback like();
     height: 56px;
     border-radius: Theme.radius-size-m;
-    in property <bool> hot: ta.has-hover || like-ta.has-hover || more-ta.has-hover;
+    in property <bool> hot: ta.has-hover || like-ta.has-hover || more-ta.has-hover || title-ta.has-hover;
     background: current || hot ? Theme.controls-color-secondary-default-disabled : transparent;
     ta := TouchArea { mouse-cursor: MouseCursor.pointer; clicked => { root.play(); } }
     if hot || current: Icon {
@@ -296,7 +310,7 @@ export component AlbumTrackRow inherits Rectangle {
     }
     HorizontalLayout {
         x: 44px;
-        width: parent.width - 44px - 136px;
+        width: parent.width - 44px - 136px - (item.best ? 40px : 0px);
         height: 20px;
         spacing: 4px;
         Text {
@@ -307,6 +321,18 @@ export component AlbumTrackRow inherits Rectangle {
             font-size: Theme.font-size-label-m;
             font-weight: 500;
             color: current ? Theme.controls-color-primary-text-hovered : Theme.controls-color-primary-text-enabled-variant;
+            if title-ta.has-hover: Rectangle {
+                x: 0;
+                y: (parent.height + parent.font-size) / 2 + 1px;
+                width: min(parent.width, parent.preferred-width);
+                height: 1px;
+                background: parent.color;
+            }
+            // Название открывает карточку трека справа, как в оригинале (#189).
+            title-ta := TouchArea {
+                mouse-cursor: MouseCursor.pointer;
+                clicked => { App.row-open-track(root.block, root.index); }
+            }
         }
         if item.version != "": Text {
             text: item.version;
@@ -319,6 +345,7 @@ export component AlbumTrackRow inherits Rectangle {
         if item.explicit: ExplicitMark { y: 1px; }
         Rectangle { horizontal-stretch: 1; }
     }
+    if item.best: Best { x: parent.width - 151px; }
     Rectangle {
         x: parent.width - 111px;
         width: 40px;

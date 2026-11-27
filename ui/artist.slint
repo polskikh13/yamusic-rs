@@ -211,7 +211,9 @@ export component ArtistPage inherits Rectangle {
                     y: 0;
                     border-radius: Theme.radius-size-m;
                     background: @linear-gradient(135deg, #ff6b5c 0%, #d9365e 100%);
-                    Icon { source: Icons.note; size: 28px; colorize: #ffffff; }
+                    Icon { visible: App.ar-familiar-cover.width == 0; source: Icons.note; size: 28px; colorize: #ffffff; }
+                    // Картинка «Знакомое вам» с сервера, как у FamiliarYou оригинала (#184).
+                    Image { source: App.ar-familiar-cover; width: 58px; height: 58px; }
                 }
                 BlockHeader { x: 70px; y: 6px; text: T.t("Знакомое вам"); clicked => { App.artist-familiar(); } }
                 Text {

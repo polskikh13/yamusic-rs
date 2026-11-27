@@ -4,7 +4,7 @@ import { Theme } from "theme.slint";
 import { Icons, Icon, Cover, Pic, Shimmer, ExplicitMark, NavCircle, ScrollBar } from "widgets.slint";
 import { T, App, LBlock, LCard, LTab, ChartRow, TrackItem } from "state.slint";
 import { TrackRow, ChartLine } from "rows.slint";
-import { CarouselArrow } from "shelf.slint";
+import { CarouselArrow, PlaylistCardActions } from "shelf.slint";
 
 // Заголовок блока: 24/26, стрелка «Смотреть всё», описание 14/20, обложка 58 слева (Премьера).
 component LHeader inherits Rectangle {
@@ -135,7 +135,7 @@ component LTile inherits Rectangle {
         round: card.round;
         radius: Theme.radius-size-l;
         source: card.cover;
-        if ta.has-hover: Rectangle {
+        if ta.has-hover && card.playlist-target == "": Rectangle {
             background: #00000033;
             Rectangle {
                 x: card.round ? (parent.width - 48px) / 2 : 12px;
@@ -228,6 +228,10 @@ component LTile inherits Rectangle {
         height: root.size;
         mouse-cursor: MouseCursor.pointer;
         clicked => { root.open(); }
+        if ta.has-hover && root.card.playlist-target != "": PlaylistCardActions {
+            target: root.card.playlist-target;
+            title: root.card.title;
+        }
     }
     TouchArea {
         y: root.size;

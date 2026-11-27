@@ -197,3 +197,125 @@ export component OverviewModal inherits Rectangle {
         }
     }
 }
+
+// Ссылка окна «О приложении» (`AboutAppModal_link`): controls-l medium, под курсором цвет
+// `primary-text-hovered`.
+component AboutLink inherits Rectangle {
+    in property <string> text;
+    in property <string> url;
+    height: Theme.font-line-height-label-l;
+    label := Text {
+        x: 0;
+        width: min(root.width, self.preferred-width);
+        height: parent.height;
+        vertical-alignment: center;
+        text: root.text;
+        font-size: Theme.font-size-label-l;
+        font-weight: 500;
+        color: ta.has-hover ? Theme.controls-color-primary-text-hovered : Theme.controls-color-primary-text-enabled-variant;
+        ta := TouchArea {
+            mouse-cursor: MouseCursor.pointer;
+            clicked => { App.open-url(root.url); }
+        }
+    }
+}
+
+// Окно «О приложении» (AboutAppModal оригинала): шириной 430, не выше окна без 40 px; шапка
+// с полями 20 сверху и 32 снизу; ссылки через 24, под ними 24; текст о возрасте между двумя
+// линиями с полями 16; ниже название и версия через 16 и 8, снизу 12. Не помещается —
+// листается без полосы. Ссылки и тексты — как у оригинала (`footer.links-*`,
+// `about-app.explicit-content`, `desktop.app-version-short`); у неофициального клиента
+// добавлены ссылка на исходный код и пометка «Неофициальный клиент», без строки «Код» (сборки
+// Electron тут нет).
+export component AboutModal inherits Rectangle {
+    in property <length> limit;
+    width: 430px;
+    height: min(root.limit, body.y + col.preferred-height);
+    border-radius: 16px;
+    background: Theme.background-color-primary-enabled-popover;
+    border-width: 1px;
+    border-color: Theme.outline-color-primary-disabled;
+    drop-shadow-blur: 20px;
+    drop-shadow-offset-y: 1px;
+    drop-shadow-color: Theme.dark ? #0000007a : #0000003d;
+    clip: true;
+    TouchArea { }
+
+    Text {
+        x: Theme.spacer-size-l;
+        y: Theme.spacer-size-xl;
+        height: 32px;
+        text: T.t("О приложении");
+        vertical-alignment: center;
+        font-family: "YS Music Headline";
+        font-size: Theme.font-size-headline-xs;
+        font-weight: 700;
+        color: Theme.controls-color-primary-text-enabled-variant;
+    }
+    Rectangle {
+        x: parent.width - Theme.spacer-size-l - 32px;
+        y: Theme.spacer-size-xl;
+        width: 32px;
+        height: 32px;
+        border-radius: 16px;
+        background: close-ta.has-hover ? Theme.controls-color-secondary-default-hovered : Theme.controls-color-secondary-default-enabled;
+        animate background { duration: App.motion ? Theme.duration-transition : 0ms; easing: ease; }
+        Icon { source: Icons.close-small; size: 20px; colorize: Theme.controls-color-primary-text-enabled-variant; }
+        close-ta := TouchArea {
+            mouse-cursor: MouseCursor.pointer;
+            clicked => { App.about-open = false; }
+        }
+    }
+
+    body := Flickable {
+        y: Theme.spacer-size-xl + 32px + Theme.spacer-size-xxxl;
+        height: parent.height - self.y;
+        content-height: col.preferred-height;
+        col := VerticalLayout {
+            width: parent.width;
+            padding-bottom: Theme.spacer-size-m;
+            VerticalLayout {
+                padding-left: Theme.spacer-size-l;
+                padding-right: Theme.spacer-size-l;
+                padding-bottom: Theme.spacer-size-xxl;
+                spacing: Theme.spacer-size-xxl;
+                AboutLink { text: T.t("Правообладателям"); url: "https://yandex.ru/support/music/performers-and-copyright-holders.html?lang=" + T.lang; }
+                AboutLink { text: T.t("Пользовательское соглашение"); url: "https://yandex.ru/legal/music_mobile_agreement?lang=" + T.lang; }
+                AboutLink { text: T.t("Правила рекомендаций (РФ)"); url: "https://music.yandex.ru/legal/recommendations/ru/#music"; }
+                AboutLink { text: T.t("Справка"); url: "https://yandex.ru/support/music/index.html?lang=" + T.lang; }
+                AboutLink { text: T.t("Исходный код"); url: App.repository; }
+            }
+            Rectangle {
+                height: note.preferred-height + 2 * Theme.spacer-size-l;
+                Rectangle { y: 0; height: 1px; background: Theme.outline-color-primary-disabled; }
+                Rectangle { y: parent.height - 1px; height: 1px; background: Theme.outline-color-primary-disabled; }
+                note := Text {
+                    x: Theme.spacer-size-l;
+                    width: parent.width - 2 * Theme.spacer-size-l;
+                    text: T.t("Неофициальный клиент Яндекс Музыки.") + " " + T.t("Сервис Яндекс Музыка может содержать информацию, не предназначенную для несовершеннолетних.");
+                    wrap: word-wrap;
+                    horizontal-alignment: center;
+                    font-size: Theme.font-size-label-xs;
+                    font-weight: 500;
+                    color: Theme.controls-color-primary-text-enabled;
+                }
+            }
+            VerticalLayout {
+                padding-top: Theme.spacer-size-l;
+                spacing: Theme.spacer-size-xs;
+                Text {
+                    text: App.app-name;
+                    horizontal-alignment: center;
+                    font-size: Theme.font-size-label-xs;
+                    color: Theme.controls-color-primary-text-enabled;
+                }
+                Text {
+                    text: T.t("Версия ") + App.version;
+                    horizontal-alignment: center;
+                    font-size: Theme.font-size-label-xs;
+                    color: Theme.controls-color-primary-text-enabled;
+                }
+            }
+        }
+    }
+}

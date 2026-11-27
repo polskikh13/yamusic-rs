@@ -352,7 +352,7 @@ RS бесплатный и без рекламы. Если он вам приг�
 
 ### Сборка
 
-Нужен Rust 1.92 или новее (`rustup update stable`). Дальше на любой системе одинаково:
+Нужен Rust 1.95 или новее (`rustup update stable`). Дальше на любой системе одинаково:
 
 ```bash
 git clone https://github.com/SpolzerMod/yamusic-rs
@@ -509,7 +509,7 @@ uses about 65 MB in one process.
 - **Privacy:** the token is encrypted with Windows DPAPI or kept in the Linux keyring (Secret Service)
   and only sent over HTTPS to `yandex.ru` / `yandex.net`. Besides Yandex, the app only talks to
   `api.github.com` (update checks) and the local Discord client (optional status). There is no telemetry.
-- **Build:** Rust 1.92+, then `cargo build --release`. On Windows you need MSVC Build Tools with the
+- **Build:** Rust 1.95+, then `cargo build --release`. On Windows you need MSVC Build Tools with the
   Windows SDK, on Linux a C toolchain and the `-dev` packages listed in the Russian section above.
 - **Bugs:** open an [issue](https://github.com/SpolzerMod/yamusic-rs/issues/new/choose) with the app
   version, your OS version (on Linux also the distro and desktop) and the last lines of

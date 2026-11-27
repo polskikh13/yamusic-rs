@@ -142,8 +142,8 @@ const FONTS: &[&str] = &[
 
 /// Семейства «YS Text», «YS Display» и «YS Music Headline» становятся доступны в Slint по имени.
 pub fn register_fonts(apk: &mut Apk) -> bool {
-    use slint::fontique_011::fontique;
-    let mut collection = slint::fontique_011::shared_collection();
+    use slint::fontique_012::fontique;
+    let mut collection = slint::fontique_012::shared_collection();
     let mut ok = false;
     for name in FONTS {
         match apk.read(name) {
