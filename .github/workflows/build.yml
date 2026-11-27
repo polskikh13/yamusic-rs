@@ -1,5 +1,5 @@
 # Каждый push и PR: clippy, тесты и сборки в артефактах: exe для Windows, .deb, .rpm и
-# AppImage для Linux (x86_64 и aarch64), APK для Android. Тег v* (например v1.0.1): то же
+# AppImage для Linux (x86_64 и aarch64), APK для Android, IPA для iOS (без подписи). Тег v* (например v1.0.1): то же
 # и релиз со всеми файлами. Его создаёт отдельное задание после всех сборок. Встроенная
 # обновлялка на Windows ищет в релизе yamusic-rs.exe, на Android — APK.
 name: Сборка
@@ -194,6 +194,31 @@ jobs:
         with:
           name: apk-arm64-v8a
           path: target/apk/yamusic-rs-arm64-v8a.apk
+          archive: false
+
+  # IPA для iPhone (iOS 15+), пока без подписи и вне релиза: ставится через Sideloadly
+  # или AltStore, они подписывают файл Apple ID пользователя.
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ios -> target
+
+      - name: IPA
+        run: ios/build.sh
+
+      - name: SHA-256
+        run: shasum -a 256 ios/target/ios/yamusic-rs.ipa
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ipa
+          path: ios/target/ios/yamusic-rs.ipa
           archive: false
 
   release:

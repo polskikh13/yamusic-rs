@@ -181,6 +181,9 @@ export component App inherits EdgeSwipeGuard {
 
     in property <Icons> icons;
     in property <bool> logged-in;
+    // Фон «Моей волны» картинкой. Его ставит только iOS: на Android волну рисует
+    // шейдер OpenGL под окном, и картинка остаётся пустой.
+    in property <image> wave-image;
 
     property <bool> rail: root.width >= 600px && root.height >= 300px;
     property <bool> wide-wave: root.width >= 540px && root.width > root.height;
@@ -213,6 +216,15 @@ export component App inherits EdgeSwipeGuard {
     // Колесо крутится по кругу: лента на сотни оборотов, начало в её середине.
     out property <int> wheel-laps: 400;
     out property <length> wheel-home: -(root.wheel-laps / 2 * root.wheel.length + 1) * root.wheel-spacing;
+
+    Image {
+        x: min(root.wave-shift, 0px) * 2;
+        width: root.width + abs(root.wave-shift) * 2;
+        height: root.height;
+        source: root.wave-image;
+        image-fit: fill;
+        image-rendering: smooth;
+    }
 
     if !root.logged-in: LoginScreen {
         width: root.width;

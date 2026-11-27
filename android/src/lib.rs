@@ -1,5 +1,6 @@
-//! Яндекс Музыка RS для Android. Общий с десктопом код (API, вход, плеер волны) берётся
+//! Яндекс Музыка RS для Android и iOS. Общий с десктопом код (API, вход, плеер волны) берётся
 //! из ../src, здесь только окно, системные вызовы и фон «Моей волны».
+//! Крейт ios/ собирает этот же файл: своё у iOS только `sys` и `media` из ../ios/src.
 
 #[path = "../../src/ahead.rs"]
 mod ahead;
@@ -64,15 +65,34 @@ mod ynison;
 mod blob;
 mod download;
 mod home;
+#[cfg(not(target_os = "ios"))]
+mod media;
+#[cfg(target_os = "ios")]
+#[path = "../../ios/src/media.rs"]
 mod media;
 mod mood;
 mod now;
 mod original;
 mod pages;
 mod profile;
+#[cfg(not(target_os = "ios"))]
+mod sys;
+#[cfg(target_os = "ios")]
+#[path = "../../ios/src/sys.rs"]
 mod sys;
 mod vector;
+// На iOS у Slint нет OpenGL: оттуда берутся только переходы и тайминги, рисует wave_cpu.
+#[cfg_attr(target_os = "ios", allow(dead_code))]
 mod wave_gl;
+#[cfg(target_os = "ios")]
+#[path = "../../ios/src/wave_cpu.rs"]
+mod wave_cpu;
+
+/// Сцена «Моей волны»: шейдер на OpenGL ES на Android, расчёт на процессоре на iOS.
+#[cfg(not(target_os = "ios"))]
+type WaveScene = wave_gl::Wave;
+#[cfg(target_os = "ios")]
+type WaveScene = wave_cpu::Wave;
 
 use api::{Api, Track};
 use config::{log, Config};
@@ -118,6 +138,7 @@ struct SleepTimer {
     after_track: Option<String>,
 }
 
+#[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: slint::android::AndroidApp) {
     // Slint ставит платформу раз на процесс: второе окно в живом процессе останется чёрным.
@@ -135,8 +156,28 @@ fn android_main(app: slint::android::AndroidApp) {
     }
 }
 
+/// Точка входа iOS: её зовёт `main` из ios/src/main.rs на главном потоке. Платформу Slint
+/// (winit, Skia на Metal) выбирает сам.
+#[cfg(target_os = "ios")]
+pub fn ios_main() {
+    // Сборка с panic = "abort": без хука причина паники не попадёт никуда.
+    std::panic::set_hook(Box::new(|info| log(format!("паника: {info}"))));
+    step(&format!("запуск {}", env!("CARGO_PKG_VERSION")));
+    sys::init();
+    if let Err(e) = run() {
+        log(format!("окно: {e}"));
+    }
+}
+
+/// Система просит освободить память: обложки скачаются заново, когда понадобятся.
+#[cfg(target_os = "ios")]
+pub(crate) fn low_memory() {
+    IMAGES.with(|i| i.clear());
+}
+
 /// Приложение скрыто или системе не хватает памяти: обложки скачаются заново, когда понадобятся,
 /// а освобождённое аллокатор сразу отдаёт системе.
+#[cfg(target_os = "android")]
 fn on_lifecycle(event: &slint::android::android_activity::PollEvent<'_>) {
     use slint::android::android_activity::{MainEvent, PollEvent};
     if let PollEvent::Main(MainEvent::Stop | MainEvent::LowMemory) = event {
@@ -150,12 +191,24 @@ fn on_lifecycle(event: &slint::android::android_activity::PollEvent<'_>) {
     }
 }
 
+/// Шаг запуска в журнал. На iOS по последнему шагу видно, где приложение закрылось.
+fn step(msg: &str) {
+    if cfg!(target_os = "ios") {
+        log(msg);
+    }
+}
+
 fn run() -> Result<(), slint::PlatformError> {
+    step("окно");
     let ui = App::new()?;
+    step("окно создано");
     let _ = UI.set(ui.as_weak());
     if let Some(top) = sys::status_bar_height() {
         ui.global::<T>().set_top(top);
     }
+    // На iOS окно появляется только внутри цикла событий: отступ под «чёлку» ставим потом.
+    #[cfg(target_os = "ios")]
+    sys::watch_safe_area(&ui);
     let shader = match original::Apk::open_installed() {
         Some(mut apk) => {
             original::register_fonts(&mut apk);
@@ -178,13 +231,22 @@ fn run() -> Result<(), slint::PlatformError> {
             Some(include_str!("wave.frag").to_string())
         }
     };
+    step("шрифты и иконки загружены");
     profile::load_pictures(&ui);
 
-    let wave: Rc<RefCell<Option<wave_gl::Wave>>> = Default::default();
+    let wave: Rc<RefCell<Option<WaveScene>>> = Default::default();
     if let Some(src) = shader {
+        #[cfg(target_os = "android")]
         install_wave(&ui, src, wave.clone());
+        // Своего шейдера у iOS нет: рисунок из wave.frag повторён в wave_cpu.
+        #[cfg(target_os = "ios")]
+        {
+            let _ = src;
+            install_wave_cpu(&ui, wave.clone());
+        }
     }
 
+    step("плеер");
     let weak = ui.as_weak();
     let player = Player::spawn(std::sync::Arc::new(move || {
         media::changed();
@@ -198,6 +260,7 @@ fn run() -> Result<(), slint::PlatformError> {
 
     // Громкость на телефоне задают кнопки системы, своего ползунка у оригинала нет.
     player.send(Cmd::Volume(1.0));
+    step("медиа");
     media::start(player.clone());
     profile::bind(&ui, &player);
     {
@@ -259,7 +322,10 @@ fn run() -> Result<(), slint::PlatformError> {
     let timer = slint::Timer::default();
     timer.start(slint::TimerMode::Repeated, Duration::from_millis(200), refresh);
 
-    ui.run()
+    step("цикл событий");
+    let res = ui.run();
+    step("цикл событий завершён");
+    res
 }
 
 fn logged_in(ui: &App, token: &str, player: &Player) {
@@ -481,7 +547,7 @@ fn tick_sleep(ui: &App, player: &Player, sleep: &Rc<RefCell<SleepTimer>>) {
 }
 
 /// Состояние плеера → свойства окна и сцена волны.
-fn sync(ui: &App, player: &Player, wave: &Rc<RefCell<Option<wave_gl::Wave>>>, queue: &Rc<RefCell<Vec<String>>>) {
+fn sync(ui: &App, player: &Player, wave: &Rc<RefCell<Option<WaveScene>>>, queue: &Rc<RefCell<Vec<String>>>) {
     let s = player.state();
     now::set_uid(&s.uid);
     now::track_changed(s.track.as_ref());
@@ -743,7 +809,37 @@ fn load_icons(mut icon: impl FnMut(&str) -> Option<slint::Image>) -> Icons {
     }
 }
 
+/// Волна на iOS: кадр считается на процессоре и ставится картинкой под интерфейс, до 30 раз
+/// в секунду, пока пятно движется или идёт переход цветов.
+#[cfg(target_os = "ios")]
+fn install_wave_cpu(ui: &App, wave: Rc<RefCell<Option<WaveScene>>>) {
+    *wave.borrow_mut() = Some(wave_cpu::Wave::new());
+    let weak = ui.as_weak();
+    let mut drawn = false;
+    let timer = slint::Timer::default();
+    timer.start(slint::TimerMode::Repeated, Duration::from_millis(33), move || {
+        let Some(ui) = weak.upgrade() else { return };
+        let mut wave = wave.borrow_mut();
+        let Some(w) = wave.as_mut() else { return };
+        let moving = ui.get_wave_moving();
+        if drawn && !moving && !w.animating() {
+            return;
+        }
+        let size = ui.window().size().to_logical(ui.window().scale_factor());
+        if size.width <= 0.0 || size.height <= 0.0 {
+            return;
+        }
+        // Со сдвигом кадр шире окна, чтобы центр пятна встал куда надо (как в wave_gl).
+        let extra = ui.get_wave_shift().abs() * 2.0;
+        ui.set_wave_image(w.frame(size.width + extra, size.height, moving));
+        drawn = true;
+    });
+    // Таймер нужен, пока живёт приложение.
+    std::mem::forget(timer);
+}
+
 /// Шейдер волны рисуется перед интерфейсом в каждом кадре, пока окно на экране.
+#[cfg(target_os = "android")]
 fn install_wave(ui: &App, fragment: String, wave: Rc<RefCell<Option<wave_gl::Wave>>>) {
     let weak = ui.as_weak();
     let res = ui.window().set_rendering_notifier(move |state, api| match state {

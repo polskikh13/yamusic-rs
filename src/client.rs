@@ -45,10 +45,10 @@ pub fn desktop_client() -> &'static str {
 /// uuid и device_id выводятся из постоянного id устройства (файл `device`), поэтому
 /// между запусками не меняются.
 /// Версия Android-клиента 2026.11.2: под неё сервер отдаёт нынешние страницы.
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 pub const ANDROID_APP_CLIENT: &str = "YandexMusicAndroid/24026572";
 
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 pub fn mobile_device_header() -> &'static str {
     static HEADER: OnceLock<String> = OnceLock::new();
     HEADER.get_or_init(|| device_header().replace("os=win32; os_version=", "os=Android; os_version=15"))

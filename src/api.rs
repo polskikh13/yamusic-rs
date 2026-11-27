@@ -49,10 +49,10 @@ pub struct Named {
     /// Фото без фона: его ставят над названием трека в «Моей волне».
     pub cutout: Option<String>,
     /// «Сборник» вместо исполнителя.
-    #[cfg_attr(target_os = "android", allow(dead_code))]
+    #[cfg_attr(mobile, allow(dead_code))]
     pub various: bool,
     /// Составной исполнитель («A & B») по частям: меню трека открывает их по отдельности.
-    #[cfg_attr(target_os = "android", allow(dead_code))]
+    #[cfg_attr(mobile, allow(dead_code))]
     pub decomposed: Vec<Named>,
 }
 
@@ -77,7 +77,7 @@ pub struct Track {
     pub duration_ms: u64,
     pub cover: Option<String>,
     /// Фото без фона, выпущенное к самому релизу (`cutoutCover` трека); есть не у всех.
-    #[cfg_attr(target_os = "android", allow(dead_code))]
+    #[cfg_attr(mobile, allow(dead_code))]
     pub cutout: Option<String>,
     pub explicit: bool,
     pub lyrics: bool,
@@ -91,7 +91,7 @@ pub struct Track {
     /// Пакет волны, из которого пришёл трек: с ним уходит фидбек по этому треку.
     pub batch_id: String,
     /// Оттенок и энергия трека: по ним «Моя волна» на телефоне красит фон.
-    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    #[cfg_attr(not(mobile), allow(dead_code))]
     pub mood: Option<Mood>,
     /// `type` трека: music, podcast-episode, audiobook, fairy-tale… Пусто — music.
     pub kind: String,
@@ -101,7 +101,7 @@ pub struct Track {
 
 /// `trackParameters` из ответа API.
 #[derive(Clone, Copy, Debug, PartialEq)]
-#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[cfg_attr(not(mobile), allow(dead_code))]
 pub struct Mood {
     pub hue: f32,
     pub energy: f32,
@@ -140,7 +140,7 @@ impl Track {
     /// исполнителе (первом), сначала фото релиза, иначе фото этого исполнителя. Размер `orig`,
     /// как у оригинала (`size: "orig"`): это кадр 5:4 с прозрачными краями, а квадратный
     /// размер сервер обрезает по бокам.
-    #[cfg_attr(target_os = "android", allow(dead_code))]
+    #[cfg_attr(mobile, allow(dead_code))]
     pub fn cutout_url(&self) -> Option<String> {
         let main = self.artist_list.first()?;
         let uri = self.cutout.as_deref().or(main.cutout.as_deref())?;
@@ -185,7 +185,7 @@ pub struct Playlist {
     pub likes: u64,
     /// Логин владельца — им адресуется плейлист в коде для вставки.
     pub login: String,
-    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    #[cfg_attr(not(mobile), allow(dead_code))]
     pub track_count: u64,
 }
 
@@ -216,11 +216,11 @@ pub struct WheelItem {
     pub description: String,
     pub cover: Option<String>,
     pub round: bool,
-    #[cfg_attr(target_os = "android", allow(dead_code))]
+    #[cfg_attr(mobile, allow(dead_code))]
     pub control_accent: bool,
     pub seeds: Vec<String>,
     /// Цвет обложки: по его оттенку телефонный клиент красит подложку карточки.
-    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    #[cfg_attr(not(mobile), allow(dead_code))]
     pub color: Option<[u8; 3]>,
 }
 
@@ -1211,13 +1211,13 @@ impl Api {
     }
 
     /// Блоки лендингов отвечают так же, как официальному приложению для Windows.
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(mobile))]
     pub fn get_raw(&self, path: &str) -> Res<Value> {
         self.send_raw(self.desktop_req(Method::GET, path))
     }
 
     /// На телефоне блоки как у мобильного клиента: сервер собирает страницы по его версии.
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     pub fn get_raw(&self, path: &str) -> Res<Value> {
         let rb = self
             .req_as(Method::GET, path, crate::client::ANDROID_APP_CLIENT)
@@ -1500,7 +1500,7 @@ impl Api {
     }
 
     /// Вкладки «Мои плейлисты» самими плейлистами: на телефоне их сортируют по дате и названию.
-    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    #[cfg_attr(not(mobile), allow(dead_code))]
     pub fn collection_playlists(&self) -> Res<Vec<(String, Vec<Playlist>)>> {
         let v = self.get_raw("/landing-blocks/collection/playlists-liked-and-playlists-created?count=500")?;
         Ok(tabs(&v, "playlist", parse_playlist))
@@ -1605,14 +1605,14 @@ impl Api {
     }
 
     /// Похожие треки, как в блоке под плеером телефона.
-    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    #[cfg_attr(not(mobile), allow(dead_code))]
     pub fn similar_tracks(&self, track_id: &str) -> Res<Vec<Track>> {
         let v = self.get(&format!("/tracks/{track_id}/similar"), &[])?;
         Ok(v.get("similarTracks").and_then(|a| a.as_array()).map(|a| a.iter().filter_map(parse_track).collect()).unwrap_or_default())
     }
 
     /// Исполнитель и сколько человек слушали его за месяц.
-    #[cfg_attr(not(target_os = "android"), allow(dead_code))]
+    #[cfg_attr(not(mobile), allow(dead_code))]
     pub fn artist_brief(&self, id: &str) -> Res<(Artist, Option<u64>)> {
         let info = self.get_raw(&format!("/artists/{id}/brief-info"))?;
         let a = info.get("artist").and_then(parse_artist).ok_or("нет данных об исполнителе")?;

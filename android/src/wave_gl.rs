@@ -10,11 +10,11 @@ use std::time::Instant;
 /// Во сколько раз текстура волны меньше экрана по каждой стороне.
 const DOWNSCALE: i32 = 3;
 /// Сдвиг центра сцены: у оригинала пятно стоит над заголовком, а не посреди экрана.
-const SCENE_OFFSET_Y: f32 = -0.225;
+pub(crate) const SCENE_OFFSET_Y: f32 = -0.225;
 /// Плавность смены цветов и скорости.
-const TRANSITION_MS: f32 = 1000.0;
+pub(crate) const TRANSITION_MS: f32 = 1000.0;
 /// Секунд времени шейдера за секунду, когда пятно движется.
-const MOTION_SPEED: f32 = 0.5;
+pub(crate) const MOTION_SPEED: f32 = 0.5;
 
 const VERTEX: &str = "attribute vec2 a_position;
 varying vec2 v_uv;
@@ -33,7 +33,7 @@ void main() {
 ";
 
 /// Значение, плавно идущее к цели по AccelerateDecelerate, как анимации оригинала.
-struct Tween {
+pub(crate) struct Tween {
     from: f32,
     to: f32,
     start: Instant,
@@ -41,22 +41,22 @@ struct Tween {
 }
 
 impl Tween {
-    fn new(v: f32) -> Tween {
+    pub(crate) fn new(v: f32) -> Tween {
         Tween { from: v, to: v, start: Instant::now(), ms: 1.0 }
     }
 
-    fn done(&self, now: Instant) -> bool {
+    pub(crate) fn done(&self, now: Instant) -> bool {
         now.duration_since(self.start).as_secs_f32() * 1000.0 >= self.ms
     }
 
-    fn go(&mut self, to: f32, ms: f32, now: Instant) {
+    pub(crate) fn go(&mut self, to: f32, ms: f32, now: Instant) {
         self.from = self.get(now);
         self.to = to;
         self.start = now;
         self.ms = ms.max(1.0);
     }
 
-    fn get(&self, now: Instant) -> f32 {
+    pub(crate) fn get(&self, now: Instant) -> f32 {
         let t = (now.duration_since(self.start).as_secs_f32() * 1000.0 / self.ms).clamp(0.0, 1.0);
         let eased = ((t + 1.0) * std::f32::consts::PI).cos() / 2.0 + 0.5;
         self.from + (self.to - self.from) * eased
@@ -394,7 +394,7 @@ fn native(id: i32) -> Option<std::num::NonZeroU32> {
 }
 
 /// Оригинал берёт случайное начало от 0 до 600, иначе после каждого запуска волна одна и та же.
-fn random_start() -> f32 {
+pub(crate) fn random_start() -> f32 {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
     (nanos % 600) as f32
 }

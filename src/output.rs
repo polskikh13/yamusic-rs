@@ -34,7 +34,7 @@ pub static TAP: Tap = Tap {
 };
 
 // Слушает только пятно на ПК, на Android его нет.
-#[cfg_attr(target_os = "android", allow(dead_code))]
+#[cfg_attr(mobile, allow(dead_code))]
 impl Tap {
     pub fn listen(&self, on: bool) {
         self.on.store(on, Ordering::Relaxed);

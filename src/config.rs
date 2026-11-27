@@ -279,8 +279,10 @@ pub fn log(msg: impl AsRef<str>) {
     if cfg!(test) {
         return;
     }
-    let _ = std::fs::create_dir_all(dir());
-    let path = dir().join("log.txt");
+    let path = log_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     if std::fs::metadata(&path).map(|m| m.len() > 512 * 1024).unwrap_or(false) {
         let _ = std::fs::remove_file(&path);
     }
@@ -291,6 +293,16 @@ pub fn log(msg: impl AsRef<str>) {
             .unwrap_or(0);
         let _ = writeln!(f, "[{t}] {msg}");
     }
+}
+
+/// Журнал лежит рядом с настройками. На iOS в Documents: настройки там закрыты песочницей,
+/// а Documents видно в «Файлах», и журнал можно прислать вместе с отчётом об ошибке.
+fn log_path() -> PathBuf {
+    #[cfg(target_os = "ios")]
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home).join("Documents").join("log.txt");
+    }
+    dir().join("log.txt")
 }
 
 pub fn now_secs() -> u64 {

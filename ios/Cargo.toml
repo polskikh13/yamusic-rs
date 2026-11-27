@@ -1,0 +1,61 @@
+[package]
+name = "yamusic-rs-ios"
+version = "1.1.10"
+edition = "2021"
+rust-version = "1.95"
+license = "GPL-3.0-only"
+repository = "https://github.com/SpolzerMod/yamusic-rs"
+publish = false
+
+# Тот же код, что у Android: lib.rs, мобильный интерфейс android/ui и общее ядро ../src.
+# Своё у iOS только sys.rs и media.rs (UIKit, MediaPlayer), их lib.rs берёт по cfg.
+[lib]
+name = "yamusic"
+path = "../android/src/lib.rs"
+
+# iOS-приложение — обычный исполняемый файл внутри .app, его собирает build.sh.
+[[bin]]
+name = "yamusic-rs"
+path = "src/main.rs"
+
+[dependencies]
+# На iOS Slint работает через winit, а Skia рисует на Metal. OpenGL там нет.
+slint = { version = "~1.19", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-skia", "unstable-fontique-012"] }
+rodio = { version = "0.20", default-features = false, features = ["symphonia-mp3", "symphonia-aac", "symphonia-isomp4"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "gzip"] }
+tungstenite = { version = "0.26", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+md-5 = "0.10"
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+miniz_oxide = "0.8"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# Модуль шейдера волны общий с Android и собирается и тут, хотя на iOS не включается.
+glow = "0.16"
+libc = "0.2"
+objc2 = "0.6.3"
+block2 = "0.6.2"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "block2", "NSString", "NSURL", "NSArray", "NSDictionary", "NSData", "NSValue", "NSObject", "NSNotification", "NSOperation"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFCGTypes"] }
+objc2-ui-kit = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-core-foundation", "UIApplication", "UIResponder", "UIWindow", "UIView", "UIViewController", "UIActivity", "UIActivityViewController", "UIPopoverPresentationController", "UIPresentationController", "UITraitCollection", "UIInterface", "UIGeometry", "UIImage", "UIScene"] }
+objc2-media-player = { version = "0.3.2", default-features = false, features = ["std", "block2", "objc2-core-foundation", "MPNowPlayingInfoCenter", "MPRemoteCommandCenter", "MPRemoteCommand", "MPRemoteCommandEvent", "MPMediaItem", "MPMediaEntity"] }
+objc2-avf-audio = { version = "0.3.2", default-features = false, features = ["std", "AVAudioSession", "AVAudioSessionTypes"] }
+
+[build-dependencies]
+slint-build = "~1.19"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# Для проверок в симуляторе: без LTO сборка в разы быстрее.
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
