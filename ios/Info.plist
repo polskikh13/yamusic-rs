@@ -71,10 +71,7 @@
 	</array>
 	<!-- Без UILaunchScreen iOS запускает приложение в старом режиме с чёрными полосами. -->
 	<key>UILaunchScreen</key>
-	<dict>
-		<key>UIColorName</key>
-		<string></string>
-	</dict>
+	<dict/>
 	<key>UIRequiresFullScreen</key>
 	<true/>
 	<key>UISupportedInterfaceOrientations</key>

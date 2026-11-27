@@ -3,7 +3,7 @@
 
 use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{MainThreadMarker, MainThreadOnly};
+use objc2::{msg_send, ClassType, MainThreadMarker, MainThreadOnly};
 use objc2_foundation::{NSArray, NSDictionary, NSNotification, NSNotificationCenter, NSOperationQueue, NSString, NSURL};
 use objc2_ui_kit::{
     UIActivityViewController, UIApplication, UIApplicationDidReceiveMemoryWarningNotification, UITraitCollection, UIUserInterfaceStyle,
@@ -70,9 +70,15 @@ fn on_main(f: impl FnOnce(MainThreadMarker) + Send + 'static) {
     });
 }
 
+/// UIApplication появляется только в UIApplicationMain, а `run` до него строит окно Slint.
+/// Обёртка objc2 считает `sharedApplication` ненулевым и паникует на nil, поэтому зовём сами.
+fn shared_app(_mtm: MainThreadMarker) -> Option<Retained<UIApplication>> {
+    unsafe { msg_send![UIApplication::class(), sharedApplication] }
+}
+
 #[allow(deprecated)]
 fn key_window(mtm: MainThreadMarker) -> Option<Retained<UIWindow>> {
-    UIApplication::sharedApplication(mtm).keyWindow()
+    shared_app(mtm)?.keyWindow()
 }
 
 /// Открыть адрес в Safari.
@@ -83,7 +89,7 @@ pub fn open_url(url: &str) {
             crate::config::log(format!("не удалось открыть {url}"));
             return;
         };
-        let app = UIApplication::sharedApplication(mtm);
+        let Some(app) = shared_app(mtm) else { return };
         unsafe { app.openURL_options_completionHandler(&u, &NSDictionary::new(), None) };
     });
 }

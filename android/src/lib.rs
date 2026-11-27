@@ -160,6 +160,9 @@ fn android_main(app: slint::android::AndroidApp) {
 /// (winit, Skia на Metal) выбирает сам.
 #[cfg(target_os = "ios")]
 pub fn ios_main() {
+    // Сборка с panic = "abort": без хука причина паники не попадёт никуда.
+    std::panic::set_hook(Box::new(|info| log(format!("паника: {info}"))));
+    step(&format!("запуск {}", env!("CARGO_PKG_VERSION")));
     sys::init();
     if let Err(e) = run() {
         log(format!("окно: {e}"));
@@ -188,8 +191,17 @@ fn on_lifecycle(event: &slint::android::android_activity::PollEvent<'_>) {
     }
 }
 
+/// Шаг запуска в журнал. На iOS по последнему шагу видно, где приложение закрылось.
+fn step(msg: &str) {
+    if cfg!(target_os = "ios") {
+        log(msg);
+    }
+}
+
 fn run() -> Result<(), slint::PlatformError> {
+    step("окно");
     let ui = App::new()?;
+    step("окно создано");
     let _ = UI.set(ui.as_weak());
     if let Some(top) = sys::status_bar_height() {
         ui.global::<T>().set_top(top);
@@ -219,6 +231,7 @@ fn run() -> Result<(), slint::PlatformError> {
             Some(include_str!("wave.frag").to_string())
         }
     };
+    step("шрифты и иконки загружены");
     profile::load_pictures(&ui);
 
     let wave: Rc<RefCell<Option<WaveScene>>> = Default::default();
@@ -233,6 +246,7 @@ fn run() -> Result<(), slint::PlatformError> {
         }
     }
 
+    step("плеер");
     let weak = ui.as_weak();
     let player = Player::spawn(std::sync::Arc::new(move || {
         media::changed();
@@ -246,6 +260,7 @@ fn run() -> Result<(), slint::PlatformError> {
 
     // Громкость на телефоне задают кнопки системы, своего ползунка у оригинала нет.
     player.send(Cmd::Volume(1.0));
+    step("медиа");
     media::start(player.clone());
     profile::bind(&ui, &player);
     {
@@ -307,7 +322,10 @@ fn run() -> Result<(), slint::PlatformError> {
     let timer = slint::Timer::default();
     timer.start(slint::TimerMode::Repeated, Duration::from_millis(200), refresh);
 
-    ui.run()
+    step("цикл событий");
+    let res = ui.run();
+    step("цикл событий завершён");
+    res
 }
 
 fn logged_in(ui: &App, token: &str, player: &Player) {
